@@ -1,0 +1,269 @@
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    CLASS-METHODS: run.
+  PRIVATE SECTION.
+    TYPES: tty_bkpf TYPE STANDARD TABLE OF bkpf.
+
+    METHODS: get_fieldcat IMPORTING it_data            TYPE ANY TABLE
+                          RETURNING VALUE(rt_fieldcat) TYPE slis_t_fieldcat_alv,
+      call_adobe_form IMPORTING it_data TYPE tty_bkpf,
+      read_file,
+      read_application,
+      test_lfs,
+      test_currency_conversion,
+      test_search_blank,
+      test_brf.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    SELECT *
+      FROM bkpf
+      INTO TABLE @DATA(lt_data).
+
+    "DATA(lt_fieldcat) = NEW main( )->get_fieldcat( it_data = lt_data ).
+
+    "CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    "  EXPORTING
+    "    it_fieldcat = lt_fieldcat
+    "  TABLES
+    "    t_outtab    = lt_data.
+
+    "NEW main( )->call_adobe_form( it_data = lt_data ).
+    "NEW main( )->read_file( ).
+    "NEW main( )->read_application( ).
+
+    "NEW main( )->test_lfs( ).
+    "NEW main( )->test_currency_conversion( ).
+    "NEW main( )->test_search_blank( ).
+    NEW main( )->test_brf( ).
+  ENDMETHOD.
+
+  METHOD get_fieldcat.
+
+    rt_fieldcat = VALUE #( FOR ls_fieldcat IN CAST cl_abap_structdescr( CAST cl_abap_tabledescr( cl_abap_typedescr=>describe_by_data( it_data ) )->get_table_line_type( ) )->components (
+                      seltext_m = ls_fieldcat-name
+                      fieldname = ls_fieldcat-name ) ).
+    "LOOP AT CAST cl_abap_structdescr( CAST cl_abap_tabledescr( cl_abap_typedescr=>describe_by_data( it_data ) )->get_table_line_type( ) )->components ASSIGNING FIELD-SYMBOL(<lfs_component>).
+    "  APPEND INITIAL LINE TO rt_fieldcat ASSIGNING FIELD-SYMBOL(<lfs_fieldcat>).
+    "  <lfs_fieldcat>-seltext_m = <lfs_fieldcat>-fieldname = <lfs_component>-name.
+    "ENDLOOP.
+  ENDMETHOD.
+
+  METHOD call_adobe_form.
+    CONSTANTS: lc_form TYPE fpname VALUE 'Z_FORM_SLIN',
+               lc_max  TYPE int1 VALUE 255.
+
+    DATA: lv_num          TYPE int1 VALUE 1,
+          lv_funcname     TYPE funcname,
+          fp_docparams    TYPE sfpdocparams,
+          fp_outputparams TYPE sfpoutputparams.
+
+    "DATA(lv_string) = |Document { lv_num } |.
+
+    TRY.
+        CALL FUNCTION 'FP_FUNCTION_MODULE_NAME'
+          EXPORTING
+            i_name     = lc_form    " Form
+          IMPORTING
+            e_funcname = lv_funcname.
+      CATCH cx_fp_api_repository.
+        MESSAGE 'Error' TYPE 'E'.
+      CATCH cx_fp_api_usage.
+        MESSAGE 'Error' TYPE 'E'.
+      CATCH cx_fp_api_internal.
+        MESSAGE 'Error' TYPE 'E'.
+    ENDTRY.
+
+    WHILE lv_num < lc_max.
+
+      CALL FUNCTION 'FP_JOB_OPEN'
+        CHANGING
+          ie_outputparams = fp_outputparams.
+
+      CALL FUNCTION lv_funcname
+        EXPORTING
+          /1bcdwb/docparams = fp_docparams
+          iv_num            = lv_num
+          iv_name           = |Document { lv_num } |.
+
+      CALL FUNCTION 'FP_JOB_CLOSE'.
+
+      lv_num = lv_num + 1.
+    ENDWHILE.
+
+
+  ENDMETHOD.
+
+  METHOD read_file.
+    CONSTANTS: lc_fname TYPE string VALUE 'C:\Users\slin\Desktop\temp\Test_Text.txt'.
+
+    DATA: lt_data TYPE STANDARD TABLE OF string.
+
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename = lc_fname
+      TABLES
+        data_tab = lt_data.
+
+    BREAK-POINT.
+  ENDMETHOD.
+
+  METHOD read_application.
+    CONSTANTS: lc_directory TYPE string VALUE '/interfaces/sap-in/Test_Text.txt'.
+    DATA: lv_data TYPE string,
+          lt_data TYPE TABLE OF string.
+
+    OPEN DATASET lc_directory FOR INPUT IN TEXT MODE ENCODING DEFAULT WITH SMART LINEFEED.
+
+    DO.
+      READ DATASET lc_directory INTO lv_data.
+      IF sy-subrc <> 0 OR lv_data IS INITIAL.
+        RETURN.
+      ENDIF.
+      APPEND lv_data TO lt_data.
+    ENDDO.
+
+    BREAK-POINT.
+  ENDMETHOD.
+
+  METHOD test_lfs.
+    TYPES: BEGIN OF ty_file,
+             tdobject    TYPE tdobject,
+             tdname      TYPE tdobname,
+             tdid        TYPE tdid,
+             tdspras     TYPE string,
+             line_number TYPE i,
+             tdformat    TYPE tdformat,
+             tdline      TYPE tdline,
+           END OF ty_file.
+    DATA: lc_string  TYPE string VALUE 'KNVV'.
+
+    DATA: lt_tdobject TYPE STANDARD TABLE OF ty_file.
+
+    APPEND INITIAL LINE TO lt_tdobject ASSIGNING FIELD-SYMBOL(<lfs_tdobject>).
+
+    "ASSIGN lc_string TO <lfs_tdobject>.
+
+    <lfs_tdobject>-tdobject = lc_string.
+
+    BREAK-POINT.
+  ENDMETHOD.
+
+  METHOD test_currency_conversion.
+    CONSTANTS: lc_foreign_currency TYPE waers VALUE 'USD',
+               "lc_foreign_amount   TYPE wrbtr VALUE 100,
+               lc_local_currency   TYPE waers VALUE 'USD'.
+
+    DATA: lv_local_amount   TYPE dmbtr,
+          lv_foreign_amount TYPE string.
+
+    CALL FUNCTION 'CONVERT_AMOUNT_TO_CURRENCY'
+      EXPORTING
+*       date             = SY-DATUM
+        foreign_currency = lc_foreign_currency
+        foreign_amount   = lv_foreign_amount
+        local_currency   = lc_local_currency
+      IMPORTING
+        local_amount     = lv_local_amount
+*      TABLES
+*       t_c_errors       =
+*      EXCEPTIONS
+*       error            = 1
+*       others           = 2
+      .
+    IF sy-subrc <> 0.
+*     MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+*                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD test_search_blank.
+    CONSTANTS: lc_belnr TYPE bukrs VALUE '100'.
+
+    DATA: lv_num  TYPE i.
+
+    DATA: lt_data TYPE TABLE OF bkpf WITH NON-UNIQUE SORTED KEY bukrs_key COMPONENTS bukrs.
+
+    lt_data = VALUE #( ( bukrs = 100 ) ).
+
+
+    DATA(lt_test) = FILTER #( lt_data USING KEY bukrs_key WHERE bukrs <> CONV #( space ) ).
+
+    DELETE lt_data WHERE belnr IS INITIAL.
+
+    READ TABLE lt_data TRANSPORTING NO FIELDS WITH KEY belnr = space.
+
+    IF sy-subrc <> 0.
+      MESSAGE 'Failed' TYPE 'I'.
+    ENDIF.
+
+    IF line_exists( lt_data[ gjahr = space ] ).
+      MESSAGE 'Test' TYPE 'I'.
+    ENDIF.
+
+    IF lv_num = space.
+      MESSAGE 'Test2' TYPE 'I'.
+    ENDIF.
+
+    BREAK-POINT.
+  ENDMETHOD.
+
+  METHOD test_brf.
+    CONSTANTS:lv_function_id TYPE if_fdt_types=>id VALUE '4A36DC24990A1FE09487F62C52A04E1D',
+              lc_gl          TYPE hkont VALUE '0002104002'.
+    DATA:lv_timestamp  TYPE timestamp,
+         lt_name_value TYPE abap_parmbind_tab,
+         ls_name_value TYPE abap_parmbind,
+         lr_data       TYPE REF TO data,
+         lx_fdt        TYPE REF TO cx_fdt,
+         la_gl         TYPE if_fdt_types=>element_text,
+         lv_return     TYPE string.
+    FIELD-SYMBOLS <la_any> TYPE any.
+****************************************************************************************************
+* All method calls within one processing cycle calling the same function must use the same timestamp.
+* For subsequent calls of the same function, we recommend to use the same timestamp for all calls.
+* This is to improve the system performance.
+****************************************************************************************************
+* If you are using structures or tables without DDIC binding, you have to declare the respective types
+* by yourself. Insert the according data type at the respective source code line.
+****************************************************************************************************
+    GET TIME STAMP FIELD lv_timestamp.
+****************************************************************************************************
+* Process a function without recording trace data, passing context data objects via a name/value table.
+****************************************************************************************************
+* Prepare function processing:
+****************************************************************************************************
+    ls_name_value-name = 'GL'.
+    la_gl = lc_gl.
+    GET REFERENCE OF la_gl INTO lr_data.
+    ls_name_value-value = lr_data.
+    INSERT ls_name_value INTO TABLE lt_name_value.
+****************************************************************************************************
+* Create the data to store the result value after processing the function
+* You can skip the following call, if you already have
+* a variable for the result. Please replace also the parameter
+* EA_RESULT in the method call CL_FDT_FUNCTION_PROCESS=>PROCESS
+* with the desired variable.
+****************************************************************************************************
+    cl_fdt_function_process=>get_data_object_reference( EXPORTING iv_function_id      = lv_function_id
+                                                                  iv_data_object      = '_V_RESULT'
+                                                                  iv_timestamp        = lv_timestamp
+                                                                  iv_trace_generation = abap_false
+                                                        IMPORTING er_data             = lr_data ).
+    TRY.
+        cl_fdt_function_process=>process( EXPORTING iv_function_id = lv_function_id
+                                                    iv_timestamp   = lv_timestamp
+                                          IMPORTING ea_result      = lv_return
+                                          CHANGING  ct_name_value  = lt_name_value ).
+      CATCH cx_fdt INTO lx_fdt.
+****************************************************************************************************
+* You can check CX_FDT->MT_MESSAGE for error handling.
+****************************************************************************************************
+    ENDTRY.
+    MESSAGE lv_return TYPE 'I'.
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+  main=>run( ).
