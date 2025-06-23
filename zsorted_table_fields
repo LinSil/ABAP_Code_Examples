@@ -1,0 +1,65 @@
+DATA: gv_field  TYPE fieldname.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1.
+
+  PARAMETERS: p_tabnam   TYPE tabname.
+
+  SELECT-OPTIONS: s_fields    FOR gv_field.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    CLASS-METHODS: run.
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_dd03l,
+             fieldname TYPE fieldname,
+           END OF ty_dd03l.
+
+    DATA: mt_fields   TYPE TABLE OF ty_dd03l,
+          mt_fieldcat TYPE slis_t_fieldcat_alv.
+
+    METHODS: get_data,
+      get_fieldcat,
+      display_data.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    DATA(lo_main) = NEW main( ).
+
+    lo_main->get_data( ).
+    lo_main->get_fieldcat( ).
+    lo_main->display_data( ).
+  ENDMETHOD.
+
+  METHOD get_data.
+    SELECT fieldname
+        FROM dd03l
+        INTO TABLE @mt_fields
+        WHERE tabname = @p_tabnam
+          AND fieldname IN @s_fields
+          ORDER BY position.
+
+  ENDMETHOD.
+
+  METHOD get_fieldcat.
+
+    mt_fieldcat = VALUE #( FOR ls_fieldcat IN CAST cl_abap_structdescr( CAST cl_abap_tabledescr( cl_abap_typedescr=>describe_by_data( mt_fields ) )->get_table_line_type( ) )->components (
+                      seltext_m = ls_fieldcat-name
+                      fieldname = ls_fieldcat-name ) ).
+  ENDMETHOD.
+
+  METHOD display_data.
+
+    CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+      EXPORTING
+        it_fieldcat = mt_fieldcat
+      TABLES
+        t_outtab    = mt_fields.
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+
+  main=>run( ).
