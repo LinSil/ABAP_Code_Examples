@@ -1,0 +1,120 @@
+CLASS zcl_eml_gm DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    INTERFACES if_oo_adt_classrun .
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
+
+CLASS zcl_eml_gm IMPLEMENTATION.
+
+  METHOD if_oo_adt_classrun~main.
+    CONSTANTS: lc_traveluuid  TYPE sysuuid_x16 VALUE 'AA1FCA817F7CE16B190063564DDEDAF3'.
+
+    "Read Entities
+*    READ ENTITIES OF zi_travel_gm
+*        ENTITY Travel
+*        FROM VALUE #( ( TravelUUId = lc_traveluuid ) )
+*        RESULT DATA(lt_travels).
+*
+*    out->write( lt_travels ).
+
+    "Read fields from Entity
+*    READ ENTITIES OF zi_travel_gm
+*        ENTITY Travel
+*            FIELDS ( AgencyId CustomerId )
+*        WITH VALUE #( ( TravelUUId = lc_traveluuid ) )
+*        RESULT DATA(lt_travels).
+*
+*    out->write( lt_travels ).
+
+    "Read all fields from Entity
+*    READ ENTITIES OF zi_travel_gm
+*        ENTITY Travel
+*            ALL FIELDS
+*        WITH VALUE #( ( TravelUUId = lc_traveluuid ) )
+*        RESULT DATA(lt_travels).
+*
+*    out->write( lt_travels ).
+
+    "Read from Entity by association
+*    READ ENTITIES OF zi_travel_gm
+*        ENTITY Travel BY \_Booking
+*            ALL FIELDS
+*        WITH VALUE #( ( TravelUUId = lc_traveluuid ) )
+*        RESULT DATA(lt_booking).
+*
+*    out->write( lt_booking ).
+
+    "Read failed from Entity
+*    READ ENTITIES OF zi_travel_gm
+*        ENTITY Travel
+*            ALL FIELDS
+*        WITH VALUE #( ( TravelUUId = '99999999999999999990' ) )
+*        RESULT DATA(lt_travels)
+*        FAILED DATA(lt_failed)
+*        REPORTED DATA(lt_reported).
+*
+*    out->write( lt_travels ).
+*    out->write( lt_failed ).
+*    out->write( lt_reported ).
+
+    "Modify Entity
+*    MODIFY ENTITIES OF zi_travel_gm
+*        ENTITY Travel
+*        UPDATE
+*            SET FIELDS WITH VALUE #( ( TravelUuid  = lc_traveluuid
+*                                       Description = 'Test' ) )
+*       FAILED DATA(lt_failed)
+*       REPORTED DATA(lt_reported).
+*
+*    COMMIT ENTITIES
+*     RESPONSE OF zi_travel_gm
+*     FAILED DATA(lt_failed_commit)
+*     REPORTED DATA(lt_reported_commit).
+*
+*    out->write( 'Updated' ).
+
+    "Create Entity
+*    MODIFY ENTITIES OF zi_travel_gm
+*        ENTITY Travel
+*        CREATE
+*            SET FIELDS WITH VALUE #( ( %cid        = 'TestGM'
+*                                       AgencyId    = '70012'
+*                                       CustomerId  = '14'
+*                                       BeginDate   = cl_abap_context_info=>get_system_date( )
+*                                       Description = 'Test' ) )
+*       MAPPED DATA(lt_mapped)
+*       FAILED DATA(lt_failed)
+*       REPORTED DATA(lt_reported).
+*
+*    out->write( lt_mapped-travel ).
+*
+*    COMMIT ENTITIES
+*     RESPONSE OF zi_travel_gm
+*     FAILED DATA(lt_failed_commit)
+*     REPORTED DATA(lt_reported_commit).
+*
+*    out->write( 'Created' ).
+
+    "Delete Entity
+    MODIFY ENTITIES OF zi_travel_gm
+        ENTITY Travel
+        DELETE FROM
+           VALUE #( ( TravelUuid = '9E830BD2257D1FD092DC18A8DAE72EA9' ) )
+       FAILED DATA(lt_failed)
+       REPORTED DATA(lt_reported).
+
+    COMMIT ENTITIES
+     RESPONSE OF zi_travel_gm
+     FAILED DATA(lt_failed_commit)
+     REPORTED DATA(lt_reported_commit).
+
+    out->write( 'Deleted' ).
+  ENDMETHOD.
+
+ENDCLASS.
