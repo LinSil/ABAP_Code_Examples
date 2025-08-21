@@ -1,0 +1,74 @@
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS run.
+
+  PRIVATE SECTION.
+    METHODS get_data,
+            convert_context_to_value      IMPORTING iv_context           TYPE any
+                                                     iv_function_id       TYPE if_fdt_types=>id
+                                                     iv_context_id        TYPE clike
+                                                     iv_timestamp         TYPE timestamp
+                                                     iv_ddic              TYPE abap_boolean
+                                           RETURNING VALUE(rv_output)     TYPE REF TO data,
+            get_brf_reference             IMPORTING iv_functionid        TYPE if_fdt_types=>id
+                                                     iv_data_object       TYPE clike DEFAULT '_V_RESULT'
+                                                     iv_timestamp         TYPE timestamp
+                                           RETURNING VALUE(rv_output)     TYPE REF TO data.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    get_data( ).
+  ENDMETHOD.
+
+  METHOD get_data.
+    CONSTANTS: lc_function_id  TYPE if_fdt_types=>id VALUE '{INSERT FUNCTION ID}',
+               lc_context_id   TYPE string VALUE '{INSERT CONTEXT ID}',
+               lc_context_name TYPE abap_parmname VALUE '{INSERT CONTEXT NAME}',
+               lc_component    TYPE string VALUE '{INSERT FIELD NAME}',
+               lc_abap_true    TYPE abap_boolean VALUE 'X'.
+
+    DATA lt_name_value TYPE abap_parmbind_tab.
+
+    GET TIME STAMP FIELD FINAL(lv_timestamp).
+
+    "Set values for context to filter in BRF call
+    FINAL(lv_context) = VALUE {INSERT CONTEXT TYPE}( {INSERT VALUES FOR FIELDS} ).
+    INSERT VALUE #( name  = lc_context_name
+                    value = convert_context_to_value( iv_context     = lv_context
+                                                      iv_function_id = lc_function_id
+                                                      iv_context_id  = lc_context_id
+                                                      iv_timestamp   = iv_timestamp
+                                                      iv_ddic        = lc_abap_true ) ) INTO TABLE lt_name_value.
+    "Get reference of output structure for logo
+    FINAL(lv_data_reference) = get_brf_reference( iv_functionid = lc_function_id iv_timestamp = iv_timestamp ).
+
+    "Call process to get BRF value based on context value
+    ASSIGN lv_data_reference->* TO FIELD-SYMBOL(<lfs_data>).
+    cl_fdt_function_process=>process( EXPORTING iv_function_id = lc_function_id
+                                      IMPORTING ea_result      = <lfs_data>
+                                      CHANGING  ct_name_value  = lt_name_value ).
+
+    "Read component of output of BRF call
+    ASSIGN COMPONENT lc_component OF STRUCTURE <lfs_data> TO FIELD-SYMBOL(<lfs_component>).
+  ENDMETHOD.
+
+  METHOD convert_context_to_value.
+    cl_fdt_function_process=>move_data_to_data_object( EXPORTING ir_data             = REF #( iv_context )
+                                                                 iv_function_id      = iv_function_id
+                                                                 iv_data_object      = iv_context_id
+                                                                 iv_timestamp        = iv_timestamp
+                                                                 iv_has_ddic_binding = iv_ddic
+                                                       IMPORTING er_data             = rv_output ).
+  ENDMETHOD.
+
+  METHOD get_brf_reference.
+    cl_fdt_function_process=>get_data_object_reference( EXPORTING iv_function_id = iv_functionid
+                                                                  iv_data_object = iv_data_object
+                                                                  iv_timestamp   = iv_timestamp
+                                                        IMPORTING er_data        = rv_output ).
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+  NEW main( )->run( ).
