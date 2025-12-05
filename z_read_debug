@@ -1,0 +1,122 @@
+SELECTION-SCREEN BEGIN OF BLOCK b1.
+  PARAMETERS: p_file   TYPE rlgrap-filename OBLIGATORY,
+              p_endcol TYPE i OBLIGATORY,
+              p_endrow TYPE i OBLIGATORY,
+              p_value  TYPE c LENGTH 50,
+              p_field  TYPE name_feld,
+              p_strict AS CHECKBOX.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  DATA: lt_file_table TYPE filetable,
+        lv_rc         TYPE i.
+
+  cl_gui_frontend_services=>file_open_dialog( CHANGING file_table = lt_file_table
+                                                       rc         = lv_rc ).
+  p_file = lt_file_table[ 1 ]-filename.
+
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS run.
+
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_row,
+             index TYPE i,
+             value TYPE c LENGTH 50,
+           END OF ty_row,
+
+           BEGIN OF ty_output,
+             field TYPE string,
+             value TYPE c LENGTH 50,
+           END OF ty_output.
+
+    DATA: mt_data   TYPE STANDARD TABLE OF alsmex_tabline,
+          mt_output TYPE STANDARD TABLE OF ty_output.
+
+    METHODS: read_file,
+             loop_data,
+             display_data.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    CHECK p_value IS NOT INITIAL OR p_field IS NOT INITIAL.
+    read_file( ).
+    loop_data( ).
+    display_data( ).
+  ENDMETHOD.
+
+  METHOD read_file.
+    CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+      EXPORTING filename    = p_file
+                i_begin_col = 1
+                i_begin_row = 1
+                i_end_col   = p_endcol
+                i_end_row   = p_endrow
+      TABLES    intern      = mt_data.
+  ENDMETHOD.
+
+  METHOD loop_data.
+    DATA: lt_row     TYPE STANDARD TABLE OF ty_row,
+          lt_current TYPE STANDARD TABLE OF string.
+
+    DATA(lv_index) = 0.
+
+    LOOP AT mt_data ASSIGNING FIELD-SYMBOL(<lfs_data>) GROUP BY ( row = <lfs_data>-row ) ASSIGNING FIELD-SYMBOL(<lg_group>).
+      CLEAR lt_row.
+
+      LOOP AT GROUP <lg_group> ASSIGNING FIELD-SYMBOL(<lfs_group>).
+        INSERT VALUE #( index = <lfs_group>-col value = <lfs_group>-value ) INTO TABLE lt_row.
+      ENDLOOP.
+
+      IF contains( val = lt_row[ 3 ]-value sub = 'Structure' ) OR contains( val = lt_row[ 3 ]-value sub = 'Table' ).
+        IF lt_row[ 1 ]-index = lv_index.
+          lt_current[ lv_index ] = lt_row[ 1 ]-value.
+
+        ELSEIF lt_row[ 1 ]-index > lv_index.
+          APPEND lt_row[ 1 ]-value TO lt_current.
+          lv_index += 1.
+        ENDIF.
+
+      ELSE.
+        IF lt_row[ 1 ]-index = lv_index.
+          DELETE lt_current INDEX lv_index.
+          lv_index -= 1.
+        ENDIF.
+
+        IF         p_field IS NOT INITIAL
+           AND NOT (    ( p_strict IS NOT INITIAL AND lt_row[ 1 ]-value = p_field )
+                     OR ( p_strict IS INITIAL     AND contains( val = lt_row[ 1 ]-value sub = p_field ) ) ).
+          CONTINUE.
+        ENDIF.
+
+        FINAL(lv_value) = COND #( WHEN lt_row[ 1 ]-index = lt_row[ 2 ]-index - 1 THEN lt_row[ 2 ]-value ELSE space ).
+
+        IF p_value IS NOT INITIAL AND p_value <> lv_value.
+          CONTINUE.
+        ENDIF.
+
+        APPEND VALUE #( field = REDUCE #( INIT output TYPE string FOR name IN lt_current NEXT output &&= |{ name }-| ) && lt_row[ 1 ]-value
+                        value = lv_value ) TO mt_output.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD display_data.
+    TRY.
+        cl_salv_table=>factory( IMPORTING r_salv_table = FINAL(lt_alv_table)
+                                CHANGING  t_table      = mt_output ).
+
+        lt_alv_table->get_columns( )->set_optimize( ).
+        lt_alv_table->display( ).
+      CATCH cx_salv_data_error.
+        MESSAGE |{ 'Issue with ALV Table'(002) }| TYPE 'E'.
+      CATCH cx_salv_msg.
+        MESSAGE |{ 'Issue getting ALV Table'(001) }| TYPE 'E'.
+    ENDTRY.
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+  NEW main( )->run( ).
