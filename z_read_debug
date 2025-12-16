@@ -1,20 +1,27 @@
 SELECTION-SCREEN BEGIN OF BLOCK b1.
-  PARAMETERS: p_file   TYPE rlgrap-filename OBLIGATORY,
-              p_endcol TYPE i OBLIGATORY,
-              p_endrow TYPE i OBLIGATORY,
-              p_value  TYPE c LENGTH 50,
-              p_field  TYPE name_feld,
-              p_strict AS CHECKBOX.
-
+  PARAMETERS: p_file   TYPE rlgrap-filename OBLIGATORY, "Directory of spreadsheet
+              p_endcol TYPE i OBLIGATORY,               "Last Column in spreadsheet
+              p_endrow TYPE i OBLIGATORY,               "Last Row in spreadsheet
+              p_value  TYPE c LENGTH 50,                "Input for value
+              p_field  TYPE name_feld,                  "Input for field name
+              p_strict AS CHECKBOX.                     "Flag for if field name search is strict
 SELECTION-SCREEN END OF BLOCK b1.
 
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file. "Logic for event when user wants to search for spreadsheet locally
   DATA: lt_file_table TYPE filetable,
         lv_rc         TYPE i.
 
+  "Function to display file explorer for user to select file from local device
   cl_gui_frontend_services=>file_open_dialog( CHANGING file_table = lt_file_table
                                                        rc         = lv_rc ).
-  p_file = lt_file_table[ 1 ]-filename.
+
+  "If user selected file, file name would be stored in file_table.
+  "Since it only supports 1 file selection, it would be first index.
+  TRY.
+      p_file = lt_file_table[ 1 ]-filename.
+    CATCH cx_sy_itab_line_not_found.
+      CLEAR p_file.
+  ENDTRY.
 
 CLASS main DEFINITION FINAL.
   PUBLIC SECTION.
@@ -22,7 +29,7 @@ CLASS main DEFINITION FINAL.
 
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_row,
-             index TYPE i,
+             col   TYPE i,
              value TYPE c LENGTH 50,
            END OF ty_row,
 
@@ -41,6 +48,8 @@ ENDCLASS.
 
 CLASS main IMPLEMENTATION.
   METHOD run.
+    "Check if user inputed either a value or field name. No point of running if both are blank. It would just display all values.
+    "If both are blank, report will terminate exit processing block early.
     CHECK p_value IS NOT INITIAL OR p_field IS NOT INITIAL.
     read_file( ).
     loop_data( ).
@@ -48,6 +57,7 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_file.
+    "Function to read spreadsheet and return values into an internal table
     CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
       EXPORTING filename    = p_file
                 i_begin_col = 1
@@ -58,45 +68,89 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD loop_data.
-    DATA: lt_row     TYPE STANDARD TABLE OF ty_row,
-          lt_current TYPE STANDARD TABLE OF string.
+    DATA: lt_row     TYPE STANDARD TABLE OF ty_row, "Internal table for current row's values
+          lt_current TYPE STANDARD TABLE OF string. "Internal table to keep track of current stack of structures/tables we've seen before current row
 
-    DATA(lv_index) = 0.
+    DATA(lv_index) = 0. "Variable to keep track of lt_current's size so we don't need to keep calling standard function to get length
 
+    "We want to read the whole row from spreadsheet at a time so using GROUP BY with row will store all data from the same row into one group that I can read
     LOOP AT mt_data ASSIGNING FIELD-SYMBOL(<lfs_data>) GROUP BY ( row = <lfs_data>-row ) ASSIGNING FIELD-SYMBOL(<lg_group>).
       CLEAR lt_row.
 
+      "Loop through the group to store all columns and their value from same row into lt_row
       LOOP AT GROUP <lg_group> ASSIGNING FIELD-SYMBOL(<lfs_group>).
-        INSERT VALUE #( index = <lfs_group>-col value = <lfs_group>-value ) INTO TABLE lt_row.
+        INSERT VALUE #( col = <lfs_group>-col value = <lfs_group>-value ) INTO TABLE lt_row.
       ENDLOOP.
 
-      IF contains( val = lt_row[ 3 ]-value sub = 'Structure' ) OR contains( val = lt_row[ 3 ]-value sub = 'Table' ).
-        IF lt_row[ 1 ]-index = lv_index.
+      "Spreadsheet data follows the following format, {Field name} {Value} {Data Type} {Length}.
+      "However in the standard function used to read spreadsheet, it will ignore blanks, so if {Value} is blank. It will not appear in the that row.
+      "Resulting the format for that row to be {Field name} {Data Type} {Length} instead
+      "Important though is that column value will be normal, where if {Field name} is column 1, {Data Type} column will be 3. There will be no value
+      "with column value 2 in this case
+
+      "However if that field is a structure or table, if {Value} is blank, it will display the same value as {Data Type} and will have 4 values like the
+      "typical format, looking like this {Field name} {Data Type} {Data Type} {Length}.
+
+      "Logic will be broken down to 2 cases, either I'm looking at a structure/table or element
+      "To check if I'm looking at an structure/table, check if column for index 3 which should be {Data Type} is 2 columns away from {Field name}
+      "Only case where index 3 column is not 2 index away from {Field name} is if that row is an element with blank value
+      "Then to check if it's a structure/table versus an element with a value, check if {Data Type} contains string 'Structure' or 'Table'
+      IF lt_row[ 3 ]-col = lt_row[ 1 ]-col + 2 AND (    contains( val = lt_row[ 3 ]-value sub = 'Structure' )
+                                                     OR contains( val = lt_row[ 3 ]-value sub = 'Table' ) ).
+
+        "In the spreadsheet, elements within a structure are indented 1 column to the right from the structure
+        "Same for structures within a structure, that structure would be indented 1 column to the right from parent structure
+        "For example, if we have struct1, struct2, and struct3 where struct1 is the parent structure of both. Spreadsheet would look like this
+        "{Struct1} {Structure} {Structure} {Length}
+        "          {Struct2}   {Structure} {Structure} {Length}
+        "          {Struct3}   {Structure} {Structure} {Length}
+        "lt_row would contain the stack of {Struct1} {Struct2} when reading elements within Struct2
+
+        "So if column of current {Field name} is the same as last strucutre/table in lt_current stack.
+        "We are reading a new structure/table in the same parent structure/table
+        "So replace last value with current structure/table
+        IF lt_row[ 1 ]-col = lv_index.
           lt_current[ lv_index ] = lt_row[ 1 ]-value.
 
-        ELSEIF lt_row[ 1 ]-index > lv_index.
+        "Else if column of {Field name} is greater, we are reading a new structure/table within the current structure/table
+        "So append current {Field name} into lt_current
+        ELSEIF lt_row[ 1 ]-col > lv_index.
           APPEND lt_row[ 1 ]-value TO lt_current.
           lv_index += 1.
         ENDIF.
 
+      "Else, I'm looking at an element
       ELSE.
-        IF lt_row[ 1 ]-index = lv_index.
+        "If {Field name} column is the same as last stack in lt_row, we've left that structure/table. Delete that structure/table from stack
+        IF lt_row[ 1 ]-col = lv_index.
           DELETE lt_current INDEX lv_index.
           lv_index -= 1.
         ENDIF.
 
-        IF         p_field IS NOT INITIAL
-           AND NOT (    ( p_strict IS NOT INITIAL AND lt_row[ 1 ]-value = p_field )
-                     OR ( p_strict IS INITIAL     AND contains( val = lt_row[ 1 ]-value sub = p_field ) ) ).
+        "Check for field name, here I want to check for the false case so I can skip this row if invalid
+        "First check if user entered a field name
+        "Then check for Negation for a valid field name which is either strict is checked and {Field name} is field name from user input
+        "or strict is not checked and {Field name} contains field name from user input as a substring
+        "If both of this is true, we found an invalid field name, so skip this row
+        IF p_field IS NOT INITIAL AND NOT (    ( p_strict IS NOT INITIAL AND lt_row[ 1 ]-value = p_field )
+                                            OR ( p_strict IS INITIAL     AND contains( val = lt_row[ 1 ]-value sub = p_field ) ) ).
           CONTINUE.
         ENDIF.
 
-        FINAL(lv_value) = COND #( WHEN lt_row[ 1 ]-index = lt_row[ 2 ]-index - 1 THEN lt_row[ 2 ]-value ELSE space ).
+        "Since there is a case where for elements if {Value} is blank, it will not be read. Check if column for index 2 is 1 column away from {Field name}
+        "If it is 1 column away, store the value into lv_value
+        "Otherwise store space into lt_value
+        FINAL(lv_value) = COND #( WHEN lt_row[ 1 ]-col = lt_row[ 2 ]-col - 1 THEN lt_row[ 2 ]-value ELSE space ).
 
+        "Check for value
+        "If user entered a value for p_value and lv_value isn't the same value, skip this row
         IF p_value IS NOT INITIAL AND p_value <> lv_value.
           CONTINUE.
         ENDIF.
 
+        "If logic reaches here, it's a valid value/field name.
+        "Use REDUCE to concatenate all structure/table names from stack lt_current and add current {Field name} at the end to get full field name for this
+        "value and store lv_value as the value.
         APPEND VALUE #( field = REDUCE #( INIT output TYPE string FOR name IN lt_current NEXT output &&= |{ name }-| ) && lt_row[ 1 ]-value
                         value = lv_value ) TO mt_output.
       ENDIF.
@@ -104,14 +158,13 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD display_data.
+    "Create ALV table for output
     TRY.
         cl_salv_table=>factory( IMPORTING r_salv_table = FINAL(lt_alv_table)
                                 CHANGING  t_table      = mt_output ).
 
         lt_alv_table->get_columns( )->set_optimize( ).
         lt_alv_table->display( ).
-      CATCH cx_salv_data_error.
-        MESSAGE |{ 'Issue with ALV Table'(002) }| TYPE 'E'.
       CATCH cx_salv_msg.
         MESSAGE |{ 'Issue getting ALV Table'(001) }| TYPE 'E'.
     ENDTRY.
