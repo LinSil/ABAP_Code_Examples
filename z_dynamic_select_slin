@@ -168,7 +168,8 @@ CLASS main IMPLEMENTATION.
                               WHEN 1 THEN 'INNER JOIN'
                               WHEN 2 THEN 'LEFT OUTER JOIN'
                               WHEN 3 THEN 'RIGHT OUTER JOIN'
-                              ELSE 'CROSS JOIN' ).
+                              WHEN 4 THEN 'CROSS JOIN'
+                              ELSE THROW cx_sy_itab_line_not_found( ) ).
       CATCH cx_sy_itab_line_not_found.
         MESSAGE |{ 'Missing Join for'(005) } { s_tables[ iv_index - 1 ]-low } { s_tables[ iv_index ]-low }| TYPE 'E'.
     ENDTRY.
@@ -176,7 +177,10 @@ CLASS main IMPLEMENTATION.
 
   METHOD get_join_condition.
     LOOP AT is_table_field-fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
-      APPEND |{ find_join_table( <lfs_field>-field ) }~{ <lfs_field>-field } = { is_table_field-table }~{ <lfs_field>-field }| TO rt_output.
+      FINAL(lv_table) = find_join_table( <lfs_field>-field ).
+      IF lv_table IS NOT INITIAL.
+        APPEND |{ lv_table }~{ <lfs_field>-field } = { is_table_field-table }~{ <lfs_field>-field }| TO rt_output.
+      ENDIF.
     ENDLOOP.
   ENDMETHOD.
 
@@ -186,8 +190,6 @@ CLASS main IMPLEMENTATION.
         RETURN <lfs_table_field>-table.
       ENDIF.
     ENDLOOP.
-
-    MESSAGE |{ 'Could not find table for field'(004) } { iv_field }| TYPE 'E'.
   ENDMETHOD.
 
   METHOD create_field_table.
