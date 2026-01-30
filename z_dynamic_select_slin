@@ -1,4 +1,3 @@
-REPORT z_select_slin.
 DATA: gv_table     TYPE tabname,
       gv_field     TYPE fieldname,
       gv_join      TYPE int1,
@@ -7,7 +6,7 @@ DATA: gv_table     TYPE tabname,
 SELECTION-SCREEN BEGIN OF BLOCK b1.
   SELECT-OPTIONS: s_tables FOR gv_table OBLIGATORY NO INTERVALS,
                   s_vfield FOR gv_field OBLIGATORY NO INTERVALS,
-                  s_fields FOR gv_field NO INTERVALS,
+                  s_fields FOR gv_field OBLIGATORY NO INTERVALS,
                   s_joins  FOR gv_join NO INTERVALS,
                   s_wheref FOR gv_field NO INTERVALS,
                   s_wherev FOR gv_field_val.
@@ -77,6 +76,10 @@ CLASS main DEFINITION FINAL.
              get_join              IMPORTING iv_index         TYPE syst_tabix
                                    RETURNING VALUE(rv_output) TYPE string,
 
+             get_on                IMPORTING iv_index         TYPE syst_tabix
+                                             is_table_field   TYPE ty_table_fields
+                                   RETURNING VALUE(rv_output) TYPE string,
+
              get_join_condition    IMPORTING is_table_field   TYPE ty_table_fields
                                    RETURNING VALUE(rt_output) TYPE stty_fields,
 
@@ -115,7 +118,7 @@ CLASS main IMPLEMENTATION.
 
   METHOD read_tables.
     LOOP AT s_tables ASSIGNING FIELD-SYMBOL(<lfs_table>).
-      process_table_field( <lfs_table>-low ).
+      process_table_field( condense( <lfs_table>-low ) ).
     ENDLOOP.
   ENDMETHOD.
 
@@ -135,7 +138,7 @@ CLASS main IMPLEMENTATION.
       WHERE electronicdoctablename = @iv_table
       INTO @FINAL(lv_found).
 
-    IF sy-subrc IS NOT INITIAL.
+    IF lv_found = abap_false.
       MESSAGE |{ iv_table } { 'does not exist'(001) }| TYPE 'E'.
     ENDIF.
   ENDMETHOD.
@@ -144,8 +147,6 @@ CLASS main IMPLEMENTATION.
     SPLIT iv_field AT iv_delimiter INTO TABLE FINAL(lt_fields).
 
     create_table_field( iv_table = iv_table it_fields = lt_fields ).
-
-    APPEND VALUE #( table = iv_table fields = create_field_table( iv_table = iv_table it_fields = lt_fields ) ) TO mt_table_fields.
   ENDMETHOD.
 
   METHOD create_table_field.
@@ -158,7 +159,7 @@ CLASS main IMPLEMENTATION.
 
   METHOD add_from.
     mv_from &&= COND string( WHEN iv_index > 1
-                             THEN | { get_join( iv_index ) } { is_table_field-table } ON{ REDUCE #( INIT output TYPE string sep TYPE string FOR lv_line IN get_join_condition( is_table_field ) NEXT output &&= |{ sep } { lv_line }| sep = | AND| ) }|
+                             THEN | { get_join( iv_index ) } { is_table_field-table } { get_on( iv_index = iv_index is_table_field = is_table_field ) }|
                              ELSE is_table_field-table ).
   ENDMETHOD.
 
@@ -175,6 +176,17 @@ CLASS main IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
 
+  METHOD get_on.
+    TRY.
+        rv_output = SWITCH #( s_joins[ iv_index - 1 ]-low
+                              WHEN 4
+                              THEN ''
+                              ELSE |ON { REDUCE #( INIT output TYPE string sep TYPE string FOR lv_line IN get_join_condition( is_table_field ) NEXT output &&= |{ sep } { lv_line }| sep = | AND| ) }| ).
+      CATCH cx_sy_itab_line_not_found.
+        MESSAGE |{ 'Missing Join for'(005) } { s_tables[ iv_index - 1 ]-low } { s_tables[ iv_index ]-low }| TYPE 'E'.
+    ENDTRY.
+  ENDMETHOD.
+
   METHOD get_join_condition.
     LOOP AT is_table_field-fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
       FINAL(lv_table) = find_join_table( <lfs_field>-field ).
@@ -182,6 +194,10 @@ CLASS main IMPLEMENTATION.
         APPEND |{ lv_table }~{ <lfs_field>-field } = { is_table_field-table }~{ <lfs_field>-field }| TO rt_output.
       ENDIF.
     ENDLOOP.
+
+    IF rt_output IS INITIAL.
+      MESSAGE |{ 'No common fields to join for table'(009) } { is_table_field-table }| TYPE 'E'.
+    ENDIF.
   ENDMETHOD.
 
   METHOD find_join_table.
@@ -194,9 +210,15 @@ CLASS main IMPLEMENTATION.
 
   METHOD create_field_table.
     LOOP AT it_fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
-      validate_field( iv_table = iv_table iv_field = CONV #( <lfs_field> ) ).
+      FINAL(lv_condensed_field) = condense( <lfs_field> ).
 
-      INSERT VALUE #( field = <lfs_field> ) INTO TABLE rt_output.
+      IF lv_condensed_field IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      validate_field( iv_table = iv_table iv_field = CONV #( lv_condensed_field ) ).
+
+      INSERT VALUE #( field = lv_condensed_field ) INTO TABLE rt_output.
     ENDLOOP.
   ENDMETHOD.
 
@@ -213,10 +235,20 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_fields.
+    DATA lt_fields TYPE HASHED TABLE OF ty_field WITH UNIQUE KEY field.
+
     LOOP AT s_fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
-      IF validate_select_field( <lfs_field>-low ) = abap_false.
-        MESSAGE |{ 'Could not find table for field'(004) } { <lfs_field>-low }| TYPE 'E'.
+      FINAL(lv_condensed_field) = condense( <lfs_field>-low ).
+
+      IF line_exists( lt_fields[ field = CONV #( lv_condensed_field ) ] ).
+        MESSAGE |{ 'Duplicate select field'(010) } { lv_condensed_field }| TYPE 'E'.
       ENDIF.
+
+      IF validate_select_field( CONV #( lv_condensed_field ) ) = abap_false.
+        MESSAGE |{ 'Could not find table for field'(004) } { lv_condensed_field }| TYPE 'E'.
+      ENDIF.
+
+      INSERT VALUE #( field = lv_condensed_field ) INTO TABLE lt_fields.
     ENDLOOP.
   ENDMETHOD.
 
@@ -257,7 +289,7 @@ CLASS main IMPLEMENTATION.
     CREATE DATA lr_table_ref TYPE HANDLE lo_table_type.
     ASSIGN lr_table_ref->* TO FIELD-SYMBOL(<lfs_data_table>).
 
-    FINAL(lv_where) = get_where( ).
+    FINAL(lv_where) = COND #( WHEN s_wheref IS NOT INITIAL THEN get_where( ) ELSE '1=1' ).
     FINAL(lv_rows) = COND #( WHEN p_rows IS INITIAL THEN lc_default_row ELSE p_rows ).
 
     SELECT (mv_select)
@@ -290,8 +322,21 @@ CLASS main IMPLEMENTATION.
   METHOD get_seltab.
     LOOP AT s_wheref ASSIGNING FIELD-SYMBOL(<lfs_where_field>).
       APPEND INITIAL LINE TO mrt_where ASSIGNING FIELD-SYMBOL(<lfs_where>).
-      APPEND VALUE #( s_wherev[ sy-tabix ] ) TO <lfs_where>-range.
-      APPEND VALUE #( name = |{ find_join_table( <lfs_where_field>-low ) }~{ <lfs_where_field>-low }| dref = REF #( <lfs_where>-range ) ) TO rt_output.
+
+      FINAL(lv_condensed_field) = condense( <lfs_where_field>-low ).
+
+      TRY.
+          APPEND VALUE #( s_wherev[ sy-tabix ] ) TO <lfs_where>-range.
+        CATCH cx_sy_itab_line_not_found.
+          MESSAGE |{ 'Missing values for field'(011) } { lv_condensed_field } { 'at index'(012) } { sy-tabix } | TYPE 'E'.
+      ENDTRY.
+
+      FINAL(lv_table) = find_join_table( CONV #( lv_condensed_field ) ).
+      IF lv_table IS INITIAL.
+        MESSAGE |{ 'Could not find table for field'(004) } { lv_condensed_field }| TYPE 'E'.
+      ENDIF.
+
+      APPEND VALUE #( name = |{ lv_table }~{ lv_condensed_field }| dref = REF #( <lfs_where>-range ) ) TO rt_output.
     ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
