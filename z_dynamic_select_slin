@@ -289,7 +289,7 @@ CLASS main IMPLEMENTATION.
     CREATE DATA lr_table_ref TYPE HANDLE lo_table_type.
     ASSIGN lr_table_ref->* TO FIELD-SYMBOL(<lfs_data_table>).
 
-    FINAL(lv_where) = COND #( WHEN s_wheref IS NOT INITIAL THEN get_where( ) ELSE '1=1' ).
+    DATA(lv_where) = COND #( WHEN s_wheref IS NOT INITIAL THEN get_where( ) ELSE '1 = 1' ).
     FINAL(lv_rows) = COND #( WHEN p_rows IS INITIAL THEN lc_default_row ELSE p_rows ).
 
     SELECT (mv_select)
