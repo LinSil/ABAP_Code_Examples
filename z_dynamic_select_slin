@@ -67,10 +67,6 @@ CLASS main DEFINITION FINAL.
                                              it_fields        TYPE stty_fields
                                    RETURNING VALUE(rt_output) TYPE htty_fields,
 
-             process_field         IMPORTING iv_field         TYPE fieldname
-                                             iv_table         TYPE tabname
-                                   RETURNING VALUE(rv_output) TYPE fieldname,
-
              validate_field        IMPORTING iv_table         TYPE tabname
                                              iv_field         TYPE fieldname
                                    RETURNING VALUE(rv_output) TYPE rollname,
@@ -144,7 +140,7 @@ CLASS main IMPLEMENTATION.
       CATCH cx_abap_not_a_table.
         MESSAGE |{ iv_table } { 'does not exist'(001) }| TYPE 'E'.
       CATCH cx_abap_not_in_package.
-        MESSAGE |{ iv_table } { 'does not exist in valid package'(016) }| TYPE 'E'.
+        MESSAGE |{ iv_table } { 'does not exist in valid package'(015) }| TYPE 'E'.
     ENDTRY.
   ENDMETHOD.
 
@@ -158,29 +154,18 @@ CLASS main IMPLEMENTATION.
     FINAL(ls_table_field) = VALUE ty_table_fields( table = iv_table fields = create_field_table( iv_table = iv_table it_fields = it_fields ) ).
 
     add_from( is_table_field = ls_table_field iv_index = sy-tabix ).
-
-    APPEND ls_table_field TO mt_table_fields.
   ENDMETHOD.
 
   METHOD create_field_table.
     LOOP AT it_fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
-      FINAL(lv_condense_field) = condense( <lfs_field> ).
+      FINAL(lv_condense_field) = CONV fieldname( condense( <lfs_field> ) ).
 
-      IF NOT line_exists( rt_output[ field = CONV #( lv_condense_field ) ] ).
-        INSERT VALUE #( field = process_field( iv_field = CONV #( lv_condense_field ) iv_table = iv_table ) ) INTO TABLE rt_output.
+      IF NOT line_exists( rt_output[ field = lv_condense_field ] ) AND lv_condense_field IS NOT INITIAL.
+        validate_field( iv_table = iv_table iv_field = lv_condense_field ).
+
+        INSERT VALUE #( field = lv_condense_field ) INTO TABLE rt_output.
       ENDIF.
-
     ENDLOOP.
-  ENDMETHOD.
-
-  METHOD process_field.
-    IF iv_field IS INITIAL.
-      MESSAGE |{ 'Blank field in valid fields for table'(013) } { iv_table }| TYPE 'E'.
-    ENDIF.
-
-    validate_field( iv_table = iv_table iv_field = iv_field ).
-
-    rv_output = iv_field.
   ENDMETHOD.
 
   METHOD validate_field.
@@ -199,6 +184,8 @@ CLASS main IMPLEMENTATION.
     mv_from &&= COND string( WHEN iv_index > 1
                              THEN | { get_join( iv_index ) } { is_table_field-table } { get_on( iv_index = iv_index is_table_field = is_table_field ) }|
                              ELSE is_table_field-table ).
+
+    APPEND is_table_field TO mt_table_fields.
   ENDMETHOD.
 
   METHOD get_join.
@@ -225,9 +212,10 @@ CLASS main IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
 
-  METHOD get_join_condition.
+  METHOD get_join_condition. "THIS
     LOOP AT is_table_field-fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
       FINAL(lv_table) = find_join_table( <lfs_field>-field ).
+
       IF lv_table IS NOT INITIAL.
         APPEND |{ lv_table }~{ <lfs_field>-field } = { is_table_field-table }~{ <lfs_field>-field }| TO rt_output.
       ENDIF.
@@ -257,14 +245,14 @@ CLASS main IMPLEMENTATION.
       ENDIF.
 
       IF validate_select_field( CONV #( lv_condensed_field ) ) = abap_false.
-        MESSAGE |{ 'Could not find table with valid field'(015) } { lv_condensed_field }| TYPE 'E'.
+        MESSAGE |{ 'Could not find table with valid field'(014) } { lv_condensed_field }| TYPE 'E'.
       ENDIF.
 
       INSERT VALUE #( field = lv_condensed_field ) INTO TABLE lt_seen.
     ENDLOOP.
 
     IF mt_select_fields IS INITIAL.
-      MESSAGE |{ 'Could not find any logic for select fields'(014) }| TYPE 'E'.
+      MESSAGE |{ 'Could not find any logic for select fields'(013) }| TYPE 'E'.
     ENDIF.
   ENDMETHOD.
 
