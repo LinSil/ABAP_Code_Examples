@@ -1,10 +1,9 @@
+REPORT z_read_debug_slin.
 SELECTION-SCREEN BEGIN OF BLOCK b1.
-  PARAMETERS: p_file   TYPE rlgrap-filename OBLIGATORY, "Directory of spreadsheet
-              p_endcol TYPE i OBLIGATORY,               "Last Column in spreadsheet
-              p_endrow TYPE i OBLIGATORY,               "Last Row in spreadsheet
-              p_value  TYPE c LENGTH 50,                "Input for value
-              p_field  TYPE name_feld,                  "Input for field name
-              p_strict AS CHECKBOX.                     "Flag for if field name search is strict
+  PARAMETERS: p_file   TYPE string OBLIGATORY, "Directory of spreadsheet
+              p_value  TYPE string,            "Input for value
+              p_field  TYPE string,            "Input for field name
+              p_strict AS CHECKBOX.            "Flag for if field name search is strict
 SELECTION-SCREEN END OF BLOCK b1.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file. "Logic for event when user wants to search for spreadsheet locally
@@ -29,16 +28,17 @@ CLASS main DEFINITION FINAL.
 
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_row,
-             col   TYPE i,
-             value TYPE c LENGTH 50,
+             name TYPE cstring,
+             val  TYPE cstring,
+             type TYPE cstring,
            END OF ty_row,
 
            BEGIN OF ty_output,
              field TYPE string,
-             value TYPE c LENGTH 50,
+             value TYPE cstring,
            END OF ty_output.
 
-    DATA: mt_data   TYPE STANDARD TABLE OF alsmex_tabline,
+    DATA: mt_data   TYPE REF TO data,
           mt_output TYPE STANDARD TABLE OF ty_output.
 
     METHODS: read_file,
@@ -57,102 +57,83 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_file.
-    "Function to read spreadsheet and return values into an internal table
-    CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
-      EXPORTING filename    = p_file
-                i_begin_col = 1
-                i_begin_row = 1
-                i_end_col   = p_endcol
-                i_end_row   = p_endrow
-      TABLES    intern      = mt_data.
+    DATA lt_file TYPE STANDARD TABLE OF x.
+
+    cl_gui_frontend_services=>gui_upload( EXPORTING filename = p_file
+                                                    filetype = 'BIN'
+                                          CHANGING  data_tab = lt_file ).
+
+    CONCATENATE LINES OF lt_file INTO FINAL(lv_xstring) IN BYTE MODE.
+
+    FINAL(lo_spreadsheet) = CAST if_fdt_doc_spreadsheet( NEW cl_fdt_xl_spreadsheet( document_name = p_file
+                                                                                    xdocument     = lv_xstring ) ).
+
+    lo_spreadsheet->get_worksheet_names( IMPORTING worksheet_names = FINAL(lt_sheets) ).
+
+    mt_data = lo_spreadsheet->get_itab_from_worksheet( worksheet_name = lt_sheets[ 1 ] ).
   ENDMETHOD.
 
   METHOD loop_data.
-    DATA: lt_row     TYPE STANDARD TABLE OF ty_row, "Internal table for current row's values
-          lt_current TYPE STANDARD TABLE OF string. "Internal table to keep track of current stack of structures/tables we've seen before current row
+    DATA: lt_stack TYPE STANDARD TABLE OF cstring,
+          ls_row   TYPE ty_row.
 
-    DATA(lv_index) = 0. "Variable to keep track of lt_current's size so we don't need to keep calling standard function to get length
+    LOOP AT mt_data->* ASSIGNING FIELD-SYMBOL(<lfs_row>).
+      DATA(lv_read) = 0.
+      DATA(lv_index) = 0.
 
-    "We want to read the whole row from spreadsheet at a time so using GROUP BY with row will store all data from the same row into one group that I can read
-    LOOP AT mt_data ASSIGNING FIELD-SYMBOL(<lfs_data>) GROUP BY ( row = <lfs_data>-row ) ASSIGNING FIELD-SYMBOL(<lg_group>).
-      CLEAR lt_row.
+      LOOP AT CAST cl_abap_structdescr( cl_abap_structdescr=>describe_by_data( p_data = <lfs_row> ) )->components ASSIGNING FIELD-SYMBOL(<lfs_component>).
+        ASSIGN COMPONENT <lfs_component>-name OF STRUCTURE <lfs_row> TO FIELD-SYMBOL(<lfs_value>).
 
-      "Loop through the group to store all columns and their value from same row into lt_row
-      LOOP AT GROUP <lg_group> ASSIGNING FIELD-SYMBOL(<lfs_group>).
-        INSERT VALUE #( col = <lfs_group>-col value = <lfs_group>-value ) INTO TABLE lt_row.
+        IF <lfs_value> IS INITIAL.
+          CONTINUE.
+        ENDIF.
+
+        CASE lv_read.
+          WHEN 0.
+            ls_row-name = <lfs_value>.
+            lv_index = sy-tabix.
+          WHEN 1.
+            ls_row-val = <lfs_value>.
+          WHEN 2.
+            ls_row-type = <lfs_value>.
+        ENDCASE.
+
+        IF lv_read = 2.
+          EXIT.
+        ENDIF.
+
+        lv_read += 1.
       ENDLOOP.
 
-      "Spreadsheet data follows the following format, {Field name} {Value} {Data Type} {Length}.
-      "However in the standard function used to read spreadsheet, it will ignore blanks, so if {Value} is blank. It will not appear in the that row.
-      "Resulting the format for that row to be {Field name} {Data Type} {Length} instead
-      "Important though is that column value will be normal, where if {Field name} is column 1, {Data Type} column will be 3. There will be no value
-      "with column value 2 in this case
+      FINAL(lv_lines) = lines( lt_stack ).
 
-      "However if that field is a structure or table, if {Value} is blank, it will display the same value as {Data Type} and will have 4 values like the
-      "typical format, looking like this {Field name} {Data Type} {Data Type} {Length}.
+      IF contains( val = ls_row-type sub = 'Structure' ) OR contains( val = ls_row-type sub = 'Table' ).
+        IF lv_index > lv_lines.
+          APPEND ls_row-name TO lt_stack.
 
-      "Logic will be broken down to 2 cases, either I'm looking at a structure/table or element
-      "To check if I'm looking at an structure/table, check if column for index 3 which should be {Data Type} is 2 columns away from {Field name}
-      "Only case where index 3 column is not 2 index away from {Field name} is if that row is an element with blank value
-      "Then to check if it's a structure/table versus an element with a value, check if {Data Type} contains string 'Structure' or 'Table'
-      IF lt_row[ 3 ]-col = lt_row[ 1 ]-col + 2 AND (    contains( val = lt_row[ 3 ]-value sub = 'Structure' )
-                                                     OR contains( val = lt_row[ 3 ]-value sub = 'Table' ) ).
+        ELSEIF lv_index = lv_lines.
+          lt_stack[ lv_index ] = ls_row-name.
 
-        "In the spreadsheet, elements within a structure are indented 1 column to the right from the structure
-        "Same for structures within a structure, that structure would be indented 1 column to the right from parent structure
-        "For example, if we have struct1, struct2, and struct3 where struct1 is the parent structure of both. Spreadsheet would look like this
-        "{Struct1} {Structure} {Structure} {Length}
-        "          {Struct2}   {Structure} {Structure} {Length}
-        "          {Struct3}   {Structure} {Structure} {Length}
-        "lt_row would contain the stack of {Struct1} {Struct2} when reading elements within Struct2
-
-        "So if column of current {Field name} is the same as last strucutre/table in lt_current stack.
-        "We are reading a new structure/table in the same parent structure/table
-        "So replace last value with current structure/table
-        IF lt_row[ 1 ]-col = lv_index.
-          lt_current[ lv_index ] = lt_row[ 1 ]-value.
-
-        "Else if column of {Field name} is greater, we are reading a new structure/table within the current structure/table
-        "So append current {Field name} into lt_current
-        ELSEIF lt_row[ 1 ]-col > lv_index.
-          APPEND lt_row[ 1 ]-value TO lt_current.
-          lv_index += 1.
+        ELSE.
+          DELETE lt_stack INDEX lv_lines.
         ENDIF.
 
-      "Else, I'm looking at an element
       ELSE.
-        "If {Field name} column is the same as last stack in lt_row, we've left that structure/table. Delete that structure/table from stack
-        IF lt_row[ 1 ]-col = lv_index.
-          DELETE lt_current INDEX lv_index.
-          lv_index -= 1.
+        IF lv_index = lv_lines.
+          DELETE lt_stack INDEX lv_lines.
         ENDIF.
 
-        "Check for field name, here I want to check for the false case so I can skip this row if invalid
-        "First check if user entered a field name
-        "Then check for Negation for a valid field name which is either strict is checked and {Field name} is field name from user input
-        "or strict is not checked and {Field name} contains field name from user input as a substring
-        "If both of this is true, we found an invalid field name, so skip this row
-        IF p_field IS NOT INITIAL AND NOT (    ( p_strict IS NOT INITIAL AND lt_row[ 1 ]-value = p_field )
-                                            OR ( p_strict IS INITIAL     AND contains( val = lt_row[ 1 ]-value sub = p_field ) ) ).
+        IF p_value IS NOT INITIAL AND p_value <> ls_row-val.
           CONTINUE.
         ENDIF.
 
-        "Since there is a case where for elements if {Value} is blank, it will not be read. Check if column for index 2 is 1 column away from {Field name}
-        "If it is 1 column away, store the value into lv_value
-        "Otherwise store space into lt_value
-        FINAL(lv_value) = COND #( WHEN lt_row[ 1 ]-col = lt_row[ 2 ]-col - 1 THEN lt_row[ 2 ]-value ELSE space ).
-
-        "Check for value
-        "If user entered a value for p_value and lv_value isn't the same value, skip this row
-        IF p_value IS NOT INITIAL AND p_value <> lv_value.
+        IF p_field IS NOT INITIAL AND NOT (    ( p_strict IS NOT INITIAL AND ls_row-name = p_field )
+                                            OR ( p_strict IS INITIAL     AND contains( val = ls_row-name sub = p_field ) ) ).
           CONTINUE.
         ENDIF.
 
-        "If logic reaches here, it's a valid value/field name.
-        "Use REDUCE to concatenate all structure/table names from stack lt_current and add current {Field name} at the end to get full field name for this
-        "value and store lv_value as the value.
-        APPEND VALUE #( field = REDUCE #( INIT output TYPE string FOR name IN lt_current NEXT output &&= |{ name }-| ) && lt_row[ 1 ]-value
-                        value = lv_value ) TO mt_output.
+        APPEND VALUE #( field = REDUCE #( INIT output TYPE string FOR name IN lt_stack NEXT output &&= |{ name }-| ) && ls_row-name
+                        value = ls_row-val ) TO mt_output.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
