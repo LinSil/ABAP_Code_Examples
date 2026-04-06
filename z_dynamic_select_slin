@@ -1,17 +1,15 @@
-DATA: gv_table     TYPE tabname,
-      gv_field     TYPE fieldname,
-      gv_join      TYPE int1,
-      gv_field_val TYPE selopt-low.
+DATA: gv_table TYPE tabname,
+      gv_field TYPE fieldname,
+      gv_join  TYPE int1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1.
   SELECT-OPTIONS: s_tables FOR gv_table OBLIGATORY NO INTERVALS,
                   s_vfield FOR gv_field OBLIGATORY NO INTERVALS,
                   s_fields FOR gv_field OBLIGATORY NO INTERVALS,
-                  s_joins  FOR gv_join NO INTERVALS,
-                  s_wheref FOR gv_field NO INTERVALS,
-                  s_wherev FOR gv_field_val.
+                  s_joins  FOR gv_join NO INTERVALS.
 
-  PARAMETERS p_rows TYPE int1.
+  PARAMETERS: p_where AS CHECKBOX,
+              p_rows  TYPE int1.
 SELECTION-SCREEN END OF BLOCK b1.
 
 CLASS main DEFINITION FINAL.
@@ -23,12 +21,9 @@ CLASS main DEFINITION FINAL.
              field TYPE fieldname,
            END OF ty_field,
 
-           BEGIN OF ty_selopt,
-             range TYPE RANGE OF selopt-low,
-           END OF ty_selopt,
-
            stty_fields TYPE STANDARD TABLE OF string WITH DEFAULT KEY,
            htty_fields TYPE HASHED TABLE OF ty_field WITH UNIQUE KEY field,
+           stty_dfies  TYPE STANDARD TABLE OF dfies WITH DEFAULT KEY,
 
            BEGIN OF ty_table_fields,
              table  TYPE tabname,
@@ -44,8 +39,7 @@ CLASS main DEFINITION FINAL.
           mt_select_fields TYPE STANDARD TABLE OF ty_select_field,
 
           mv_from          TYPE string,
-          mv_select        TYPE string,
-          mrt_where        TYPE STANDARD TABLE OF ty_selopt.
+          mv_select        TYPE string.
 
     METHODS: read_input,
 
@@ -67,9 +61,9 @@ CLASS main DEFINITION FINAL.
                                              it_fields        TYPE stty_fields
                                    RETURNING VALUE(rt_output) TYPE htty_fields,
 
-             validate_field        IMPORTING iv_table         TYPE tabname
-                                             iv_field         TYPE fieldname
-                                   RETURNING VALUE(rv_output) TYPE rollname,
+             get_table_fields      IMPORTING iv_table         TYPE ddobjname
+                                             iv_field         TYPE fieldname OPTIONAL
+                                   RETURNING VALUE(rt_output) TYPE stty_dfies,
 
              add_from              IMPORTING is_table_field   TYPE ty_table_fields
                                              iv_index         TYPE syst_tabix,
@@ -103,7 +97,13 @@ CLASS main DEFINITION FINAL.
 
              get_where             RETURNING VALUE(rv_output) TYPE string,
 
-             get_seltab            RETURNING VALUE(rt_output) TYPE if_shdb_def=>tt_named_dref.
+             get_selection_id      RETURNING VALUE(rv_output) TYPE dynselid,
+
+             get_where_lines       IMPORTING iv_selection_id  TYPE dynselid
+                                   RETURNING VALUE(rt_output) TYPE rsds_twhere,
+
+             get_processed_lines   IMPORTING it_lines         TYPE rsds_twhere
+                                   RETURNING VALUE(rv_output) TYPE string.
 ENDCLASS.
 
 CLASS main IMPLEMENTATION.
@@ -157,27 +157,26 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD create_field_table.
+    FINAL(lt_fields) = VALUE htty_fields( FOR ls_table_field IN get_table_fields( iv_table ) ( field = ls_table_field-fieldname ) ).
+
     LOOP AT it_fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
       FINAL(lv_condense_field) = CONV fieldname( condense( <lfs_field> ) ).
 
-      IF NOT line_exists( rt_output[ field = lv_condense_field ] ) AND lv_condense_field IS NOT INITIAL.
-        validate_field( iv_table = iv_table iv_field = lv_condense_field ).
+      IF NOT line_exists( lt_fields[ field = lv_condense_field ] ).
+        MESSAGE |{ iv_table } { 'does not have'(003) } { lv_condense_field }| TYPE 'E'.
+      ENDIF.
 
+      IF NOT line_exists( rt_output[ field = lv_condense_field ] ) AND lv_condense_field IS NOT INITIAL.
         INSERT VALUE #( field = lv_condense_field ) INTO TABLE rt_output.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
 
-  METHOD validate_field.
-    SELECT SINGLE abapdataelement
-      FROM i_tablefielddefinition
-      WHERE objectname             = @iv_table
-        AND databasetablefieldname = @iv_field
-      INTO @rv_output.
-
-    IF sy-subrc IS NOT INITIAL.
-      MESSAGE |{ iv_field } { 'does not exist in table'(003) } { iv_table }| TYPE 'E'.
-    ENDIF.
+  METHOD get_table_fields.
+    CALL FUNCTION 'DDIF_FIELDINFO_GET'
+      EXPORTING tabname   = iv_table
+                fieldname = iv_field
+      TABLES    dfies_tab = rt_output.
   ENDMETHOD.
 
   METHOD add_from.
@@ -273,7 +272,8 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD add_select.
-    APPEND VALUE #( field = |{ iv_field }| data_element = validate_field( iv_table = iv_table iv_field = iv_field ) )
+    FINAL(lt_field_catalog) = get_table_fields( iv_table = iv_table iv_field = iv_field ).
+    APPEND VALUE #( field = |{ iv_field }| data_element = lt_field_catalog[ 1 ]-rollname )
         TO mt_select_fields.
 
     mv_select &&= COND #( WHEN mv_select IS NOT INITIAL
@@ -293,7 +293,7 @@ CLASS main IMPLEMENTATION.
     CREATE DATA lr_table_ref TYPE HANDLE lo_table_type.
     ASSIGN lr_table_ref->* TO FIELD-SYMBOL(<lfs_data_table>).
 
-    DATA(lv_where) = COND #( WHEN s_wheref IS NOT INITIAL THEN get_where( ) ELSE '1 = 1' ).
+    DATA(lv_where) = COND #( WHEN p_where IS NOT INITIAL THEN get_where( ) ELSE '1 = 1' ).
     FINAL(lv_rows) = COND #( WHEN p_rows IS INITIAL THEN lc_default_row ELSE p_rows ).
 
     SELECT (mv_select)
@@ -316,31 +316,46 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_where.
-    TRY.
-        rv_output = cl_shdb_seltab=>combine_seltabs( it_named_seltabs = get_seltab( ) ).
-      CATCH cx_shdb_exception.
-        MESSAGE |{ 'Issue creating where'(006) }| TYPE 'E'.
-    ENDTRY.
+    rv_output = get_processed_lines( get_where_lines( get_selection_id( ) ) ).
   ENDMETHOD.
 
-  METHOD get_seltab.
-    LOOP AT s_wheref ASSIGNING FIELD-SYMBOL(<lfs_where_field>).
-      APPEND INITIAL LINE TO mrt_where ASSIGNING FIELD-SYMBOL(<lfs_where>).
+  METHOD get_selection_id.
+    DATA lt_table TYPE TABLE OF rsdstabs.
 
-      FINAL(lv_condensed_field) = condense( <lfs_where_field>-low ).
+    lt_table = VALUE #( FOR ls_row IN mt_table_fields ( prim_tab = ls_row-table ) ).
+    CALL FUNCTION 'FREE_SELECTIONS_INIT'
+      IMPORTING selection_id = rv_output
+      TABLES    tables_tab   = lt_table.
+  ENDMETHOD.
 
-      TRY.
-          APPEND VALUE #( s_wherev[ sy-tabix ] ) TO <lfs_where>-range.
-        CATCH cx_sy_itab_line_not_found.
-          MESSAGE |{ 'Missing values for field'(011) } { lv_condensed_field } { 'at index'(012) } { sy-tabix } | TYPE 'E'.
-      ENDTRY.
+  METHOD get_where_lines.
+    DATA lt_field_tab TYPE TABLE OF rsdsfields.
 
-      FINAL(lv_table) = find_join_table( CONV #( lv_condensed_field ) ).
-      IF lv_table IS INITIAL.
-        MESSAGE |{ 'Could not find table for field'(004) } { lv_condensed_field }| TYPE 'E'.
-      ENDIF.
+    CALL FUNCTION 'FREE_SELECTIONS_DIALOG'
+      EXPORTING selection_id  = iv_selection_id
+      IMPORTING where_clauses = rt_output
+      TABLES    fields_tab    = lt_field_tab.
+  ENDMETHOD.
 
-      APPEND VALUE #( name = |{ lv_table }~{ lv_condensed_field }| dref = REF #( <lfs_where>-range ) ) TO rt_output.
+  METHOD get_processed_lines.
+    LOOP AT it_lines ASSIGNING FIELD-SYMBOL(<lfs_line>).
+      LOOP AT <lfs_line>-where_tab ASSIGNING FIELD-SYMBOL(<where_line>).
+        SPLIT <where_line> AT space INTO TABLE FINAL(lt_substring).
+
+        DATA(lv_found) = abap_false.
+
+        LOOP AT lt_substring ASSIGNING FIELD-SYMBOL(<lfs_substring>).
+          IF <lfs_substring> IS INITIAL.
+            CONTINUE.
+          ENDIF.
+
+          rv_output &&= COND #( WHEN lv_found = abap_true
+                                THEN |{ <lfs_line>-tablename }~{ <lfs_substring> } |
+                                ELSE |{ <lfs_substring> } | ).
+
+          lv_found = COND #( WHEN <lfs_substring> = '(' THEN abap_true ELSE abap_false ).
+        ENDLOOP.
+      ENDLOOP.
     ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
