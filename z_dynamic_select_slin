@@ -8,8 +8,8 @@ SELECTION-SCREEN BEGIN OF BLOCK b1.
                   s_fields FOR gv_field OBLIGATORY NO INTERVALS,
                   s_joins  FOR gv_join NO INTERVALS.
 
-  PARAMETERS: p_where AS CHECKBOX,
-              p_rows  TYPE int1.
+  PARAMETERS: p_filter AS CHECKBOX,
+              p_rows   TYPE int1.
 SELECTION-SCREEN END OF BLOCK b1.
 
 CLASS main DEFINITION FINAL.
@@ -103,6 +103,7 @@ CLASS main DEFINITION FINAL.
                                    RETURNING VALUE(rt_output) TYPE rsds_twhere,
 
              get_processed_lines   IMPORTING it_lines         TYPE rsds_twhere
+                                             iv_char          TYPE c DEFAULT '('
                                    RETURNING VALUE(rv_output) TYPE string.
 ENDCLASS.
 
@@ -211,7 +212,7 @@ CLASS main IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
 
-  METHOD get_join_condition. "THIS
+  METHOD get_join_condition.
     LOOP AT is_table_field-fields ASSIGNING FIELD-SYMBOL(<lfs_field>).
       FINAL(lv_table) = find_join_table( <lfs_field>-field ).
 
@@ -293,14 +294,23 @@ CLASS main IMPLEMENTATION.
     CREATE DATA lr_table_ref TYPE HANDLE lo_table_type.
     ASSIGN lr_table_ref->* TO FIELD-SYMBOL(<lfs_data_table>).
 
-    DATA(lv_where) = COND #( WHEN p_where IS NOT INITIAL THEN get_where( ) ELSE '1 = 1' ).
     FINAL(lv_rows) = COND #( WHEN p_rows IS INITIAL THEN lc_default_row ELSE p_rows ).
 
-    SELECT (mv_select)
-      FROM (mv_from)
-      WHERE (lv_where)
-      INTO TABLE @<lfs_data_table>
-      UP TO @lv_rows ROWS.
+    IF p_filter IS NOT INITIAL.
+      FINAL(lv_where) = get_where( ).
+
+      SELECT (mv_select)
+        FROM (mv_from)
+        WHERE (lv_where)
+        INTO TABLE @<lfs_data_table>
+        UP TO @lv_rows ROWS.
+
+    ELSE.
+      SELECT (mv_select)
+        FROM (mv_from)
+        INTO TABLE @<lfs_data_table>
+        UP TO @lv_rows ROWS.
+    ENDIF.
 
     TRY.
         cl_salv_table=>factory( IMPORTING r_salv_table = FINAL(lt_alv_table)
@@ -332,9 +342,14 @@ CLASS main IMPLEMENTATION.
     DATA lt_field_tab TYPE TABLE OF rsdsfields.
 
     CALL FUNCTION 'FREE_SELECTIONS_DIALOG'
-      EXPORTING selection_id  = iv_selection_id
-      IMPORTING where_clauses = rt_output
-      TABLES    fields_tab    = lt_field_tab.
+      EXPORTING  selection_id  = iv_selection_id
+      IMPORTING  where_clauses = rt_output
+      TABLES     fields_tab    = lt_field_tab
+      EXCEPTIONS OTHERS        = 1.
+
+    IF sy-subrc IS NOT INITIAL.
+      RETURN.
+    ENDIF.
   ENDMETHOD.
 
   METHOD get_processed_lines.
@@ -353,7 +368,7 @@ CLASS main IMPLEMENTATION.
                                 THEN |{ <lfs_line>-tablename }~{ <lfs_substring> } |
                                 ELSE |{ <lfs_substring> } | ).
 
-          lv_found = COND #( WHEN <lfs_substring> = '(' THEN abap_true ELSE abap_false ).
+          lv_found = COND #( WHEN <lfs_substring> = iv_char THEN abap_true ELSE abap_false ).
         ENDLOOP.
       ENDLOOP.
     ENDLOOP.
