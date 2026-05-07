@@ -1,0 +1,214 @@
+DATA gv_field TYPE fieldname.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1.
+  PARAMETERS: p_new  AS CHECKBOX,
+              p_name TYPE fieldname OBLIGATORY,
+              p_com  AS CHECKBOX USER-COMMAND click,
+              p_mod  AS CHECKBOX MODIF ID com USER-COMMAND click,
+              p_type TYPE fieldname MODIF ID typ.
+
+  SELECT-OPTIONS: s_name FOR gv_field NO INTERVALS OBLIGATORY,
+                  s_type FOR gv_field NO INTERVALS OBLIGATORY.
+SELECTION-SCREEN END OF BLOCK b1.
+
+AT SELECTION-SCREEN OUTPUT.
+  CONSTANTS: lc_com TYPE c LENGTH 3 VALUE 'COM',
+             lc_typ TYPE c LENGTH 3 VALUE 'TYP'.
+
+  LOOP AT SCREEN.
+    CASE screen-group1.
+      WHEN lc_com.
+        screen-active = COND #( WHEN p_com IS NOT INITIAL THEN 0 ELSE 1 ).
+        MODIFY SCREEN.
+
+      WHEN lc_typ.
+        screen-active = COND #( WHEN p_mod IS NOT INITIAL THEN 1 ELSE 0 ).
+        MODIFY SCREEN.
+    ENDCASE.
+  ENDLOOP.
+
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS run.
+
+  PRIVATE SECTION.
+    CONSTANTS: mc_xm TYPE c LENGTH 2 VALUE 'XM',
+               mc_sc TYPE c LENGTH 2 VALUE 'SC',
+               mc_re TYPE c LENGTH 2 VALUE 'RE',
+               mc_co TYPE c LENGTH 2 VALUE 'CO',
+               mc_se TYPE c LENGTH 2 VALUE 'SE',
+               mc_el TYPE c LENGTH 2 VALUE 'EL',
+               mc_ct TYPE c LENGTH 2 VALUE 'CT'.
+
+    DATA: mt_output TYPE STANDARD TABLE OF string,
+          mt_stack  TYPE STANDARD TABLE OF char2,
+          mv_indent TYPE int1.
+
+    METHODS: generate_header,
+
+             generate_double_char IMPORTING iv_char          TYPE c
+                                            iv_string        TYPE string
+                                  RETURNING VALUE(rv_output) TYPE string,
+
+             generate_node        IMPORTING iv_node          TYPE c
+                                            iv_field1_name   TYPE string OPTIONAL
+                                            iv_field1_val    TYPE string OPTIONAL
+                                            iv_field2_name   TYPE string OPTIONAL
+                                            iv_field2_val    TYPE string OPTIONAL
+                                            iv_xs            TYPE abap_boolean DEFAULT abap_true
+                                  RETURNING VALUE(rv_output) TYPE string,
+
+             generate_value       IMPORTING iv_name          TYPE string
+                                            iv_val           TYPE string
+                                  RETURNING VALUE(rv_output) TYPE string,
+
+             append_output        IMPORTING iv_string        TYPE string,
+
+             generate_xs          IMPORTING iv_string        TYPE string
+                                  RETURNING VALUE(rv_output) TYPE string,
+
+             generate_root,
+
+             generate_simple,
+
+             generate_end,
+
+             generate_end_node    IMPORTING iv_string        TYPE string
+                                  RETURNING VALUE(rv_output) TYPE string,
+
+             download_xsd.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    IF p_new = abap_true.
+      generate_header( ).
+    ENDIF.
+
+    generate_root( ).
+    generate_simple( ).
+    generate_end( ).
+    download_xsd( ).
+  ENDMETHOD.
+
+  METHOD generate_header.
+    append_output( |{ generate_double_char( iv_char = '?' iv_string = generate_node( iv_node = mc_xm iv_field1_name = |{ TEXT-002 }| iv_field1_val = |{ TEXT-003 }| ) ) }| ).
+
+    append_output( generate_node( iv_node = mc_sc iv_field1_name = |{ TEXT-006 }| iv_field1_val = |{ TEXT-007 }| ) ).
+  ENDMETHOD.
+
+  METHOD generate_double_char.
+    RETURN |{ iv_char }{ iv_string }{ iv_char }|.
+  ENDMETHOD.
+
+  METHOD generate_node.
+    CASE iv_node.
+      WHEN mc_xm.
+        rv_output = |{ TEXT-001 } { generate_value( iv_name = iv_field1_name iv_val = iv_field1_val ) }|.
+
+      WHEN mc_sc.
+        APPEND mc_sc TO mt_stack.
+        rv_output = |{ generate_xs( |{ TEXT-005 }| ) } { generate_value( iv_name = iv_field1_name iv_val = iv_field1_val ) }|.
+
+      WHEN mc_re.
+        rv_output = |{ generate_xs( |{ TEXT-008 }| ) } { generate_value( iv_name = iv_field1_name iv_val = iv_field1_val ) }|.
+        mv_indent += 2.
+        APPEND mc_re TO mt_stack.
+
+      WHEN mc_co.
+        APPEND mc_co TO mt_stack.
+        rv_output = |{ generate_xs( |{ TEXT-010 }| ) }|.
+
+      WHEN mc_se.
+        mv_indent += 2.
+        APPEND mc_se TO mt_stack.
+        rv_output = |{ generate_xs( |{ TEXT-011 }| ) }|.
+
+      WHEN mc_el.
+        rv_output = |{ generate_xs( |{ TEXT-008 }| ) } { generate_value( iv_name = iv_field1_name iv_val = iv_field1_val ) } { generate_value( iv_name = iv_field2_name
+                                                                                                                                               iv_val  = COND #( WHEN iv_xs IS NOT INITIAL
+                                                                                                                                                                 THEN generate_xs(
+                                                                                                                                                                          iv_field2_val )
+                                                                                                                                                                 ELSE iv_field2_val ) ) }/|.
+      WHEN mc_ct.
+        APPEND mc_co TO mt_stack.
+        rv_output = |{ generate_xs( |{ TEXT-010 }| ) } { generate_value( iv_name = iv_field1_name iv_val = iv_field1_val ) }|.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD generate_value.
+    rv_output = |{ iv_name }={ generate_double_char( iv_char = '"' iv_string = iv_val ) }|.
+  ENDMETHOD.
+
+  METHOD append_output.
+    DATA(lv_output) = |<{ iv_string }>|.
+    SHIFT lv_output RIGHT BY mv_indent PLACES.
+    APPEND lv_output TO mt_output.
+  ENDMETHOD.
+
+  METHOD generate_xs.
+    rv_output = |{ TEXT-004 }{ iv_string }|.
+  ENDMETHOD.
+
+  METHOD generate_root.
+    IF p_mod = abap_true.
+      append_output( generate_node( iv_node        = mc_el
+                                    iv_field1_name = |{ TEXT-009 }|
+                                    iv_field1_val  = |{ p_name }|
+                                    iv_field2_name = |{ TEXT-012 }|
+                                    iv_field2_val  = |{ p_type }|
+                                    iv_xs          = abap_false ) ).
+
+      append_output( generate_node( iv_node = mc_ct iv_field1_name = |{ TEXT-009 }| iv_field1_val = |{ p_type }| ) ).
+
+    ELSE.
+      append_output( generate_node( iv_node = mc_re iv_field1_name = |{ TEXT-009 }| iv_field1_val = |{ p_name }| ) ).
+      mv_indent += 2.
+      append_output( generate_node( iv_node = mc_co ) ).
+    ENDIF.
+
+    append_output( generate_node( iv_node = mc_se ) ).
+    mv_indent += 2.
+  ENDMETHOD.
+
+  METHOD generate_simple.
+    LOOP AT s_name ASSIGNING FIELD-SYMBOL(<lfs_name>).
+      append_output( generate_node( iv_node        = mc_el
+                                    iv_field1_name = |{ TEXT-009 }|
+                                    iv_field1_val  = |{ <lfs_name>-low }|
+                                    iv_field2_name = |{ TEXT-012 }|
+                                    iv_field2_val  = |{ s_type[ sy-tabix ]-low }| ) ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD generate_end.
+    LOOP AT mt_stack ASSIGNING FIELD-SYMBOL(<lfs_stack>) STEP -1.
+      IF mv_indent > 0.
+        mv_indent -= 2.
+      ENDIF.
+
+      CASE <lfs_stack>.
+        WHEN mc_se.
+          append_output( generate_end_node( generate_xs( |{ TEXT-011 }| ) ) ).
+        WHEN mc_co.
+          append_output( generate_end_node( generate_xs( |{ TEXT-010 }| ) ) ).
+        WHEN mc_re.
+          append_output( generate_end_node( generate_xs( |{ TEXT-008 }| ) ) ).
+        WHEN mc_sc.
+          append_output( generate_end_node( generate_xs( |{ TEXT-005 }| ) ) ).
+      ENDCASE.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD generate_end_node.
+    rv_output = |/{ iv_string }|.
+  ENDMETHOD.
+
+  METHOD download_xsd.
+    cl_gui_frontend_services=>gui_download( EXPORTING filename = 'DEMO.xsd'
+                                            CHANGING  data_tab = mt_output ).
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+  NEW main( )->run( ).
