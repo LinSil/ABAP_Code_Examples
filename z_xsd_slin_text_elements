@@ -1,0 +1,12 @@
+001	xml
+002	version
+003	1.0
+004	xs:
+005	schema
+006	xmlns:xs
+007	http://www.w3.org/2001/XMLSchema
+008	element
+009	name
+010	complexType
+011	sequence
+012	type
