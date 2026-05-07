@@ -1,15 +1,28 @@
 DATA gv_field TYPE fieldname.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1.
-  PARAMETERS: p_new  AS CHECKBOX,
-              p_name TYPE fieldname OBLIGATORY,
-              p_com  AS CHECKBOX USER-COMMAND click,
-              p_mod  AS CHECKBOX MODIF ID com USER-COMMAND click,
-              p_type TYPE fieldname MODIF ID typ.
+  PARAMETERS: p_new   AS CHECKBOX,
+              p_name  TYPE string OBLIGATORY,
+              p_com   AS CHECKBOX USER-COMMAND click,
+              p_mod   AS CHECKBOX MODIF ID com USER-COMMAND click,
+              p_type  TYPE string MODIF ID typ,
+              p_fname TYPE string OBLIGATORY.
 
   SELECT-OPTIONS: s_name FOR gv_field NO INTERVALS OBLIGATORY,
                   s_type FOR gv_field NO INTERVALS OBLIGATORY.
 SELECTION-SCREEN END OF BLOCK b1.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fname.
+  DATA: lt_file_table TYPE filetable,
+        lv_rc         TYPE i.
+
+  cl_gui_frontend_services=>file_open_dialog( CHANGING file_table = lt_file_table
+                                                       rc         = lv_rc ).
+  TRY.
+      p_fname = lt_file_table[ 1 ]-filename.
+    CATCH cx_sy_itab_line_not_found.
+      RETURN.
+  ENDTRY.
 
 AT SELECTION-SCREEN OUTPUT.
   CONSTANTS: lc_com TYPE c LENGTH 3 VALUE 'COM',
@@ -154,15 +167,15 @@ CLASS main IMPLEMENTATION.
     IF p_mod = abap_true.
       append_output( generate_node( iv_node        = mc_el
                                     iv_field1_name = |{ TEXT-009 }|
-                                    iv_field1_val  = |{ p_name }|
+                                    iv_field1_val  = p_name
                                     iv_field2_name = |{ TEXT-012 }|
-                                    iv_field2_val  = |{ p_type }|
+                                    iv_field2_val  = p_type
                                     iv_xs          = abap_false ) ).
 
-      append_output( generate_node( iv_node = mc_ct iv_field1_name = |{ TEXT-009 }| iv_field1_val = |{ p_type }| ) ).
+      append_output( generate_node( iv_node = mc_ct iv_field1_name = |{ TEXT-009 }| iv_field1_val = p_type ) ).
 
     ELSE.
-      append_output( generate_node( iv_node = mc_re iv_field1_name = |{ TEXT-009 }| iv_field1_val = |{ p_name }| ) ).
+      append_output( generate_node( iv_node = mc_re iv_field1_name = |{ TEXT-009 }| iv_field1_val = p_name ) ).
       mv_indent += 2.
       append_output( generate_node( iv_node = mc_co ) ).
     ENDIF.
@@ -205,7 +218,7 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD download_xsd.
-    cl_gui_frontend_services=>gui_download( EXPORTING filename = 'DEMO.xsd'
+    cl_gui_frontend_services=>gui_download( EXPORTING filename = p_fname
                                             CHANGING  data_tab = mt_output ).
   ENDMETHOD.
 ENDCLASS.
