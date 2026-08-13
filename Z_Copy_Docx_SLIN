@@ -1,0 +1,68 @@
+PARAMETERS: p_source TYPE string DEFAULT 'INSERT SOURCE FILE' OBLIGATORY,
+            p_target TYPE string DEFAULT 'INSERT TARGET DIRECTORY' OBLIGATORY,
+            p_name   TYPE string OBLIGATORY.
+
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    CLASS-METHODS: file_search_help CHANGING cv_file TYPE string.
+
+    METHODS: run.
+  PRIVATE SECTION.
+    CONSTANTS: mc_dev_doc TYPE c LENGTH 12 VALUE 'Dev_Doc.docx'.
+
+    TYPES: ty_data TYPE x LENGTH 255.
+
+    DATA: mt_data TYPE STANDARD TABLE OF ty_data.
+
+    METHODS: download_source,
+      create_directory,
+      upload_target.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD file_search_help.
+    DATA: lt_file_table TYPE filetable,
+          lv_rc         TYPE i.
+
+    cl_gui_frontend_services=>file_open_dialog( CHANGING file_table = lt_file_table
+                                                         rc = lv_rc ).
+
+    IF lt_file_table IS NOT INITIAL.
+      cv_file = lt_file_table[ 1 ].
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD run.
+    download_source( ).
+    create_directory( ).
+    upload_target( ).
+  ENDMETHOD.
+
+  METHOD download_source.
+    cl_gui_frontend_services=>gui_upload( EXPORTING filename = p_source
+                                                    filetype = 'BIN'
+                                          CHANGING data_tab = mt_data ).
+  ENDMETHOD.
+
+  METHOD create_directory.
+    DATA: lv_rc TYPE i.
+
+    cl_gui_frontend_services=>directory_create( EXPORTING directory = |{ p_target }\\{ p_name }|
+                                                CHANGING rc =  lv_rc ).
+  ENDMETHOD.
+
+  METHOD upload_target.
+    cl_gui_frontend_services=>gui_download( EXPORTING filename = |{ p_target }\\{ p_name }\\{ mc_dev_doc }|
+                                                      filetype = 'BIN'
+                                            CHANGING data_tab = mt_data ).
+  ENDMETHOD.
+ENDCLASS.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_source.
+  main=>file_search_help( CHANGING cv_file = p_source ).
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_target.
+  main=>file_search_help( CHANGING cv_file = p_target ).
+
+START-OF-SELECTION.
+  NEW main( )->run( ).
