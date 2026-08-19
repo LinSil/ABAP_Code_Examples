@@ -47,14 +47,16 @@ CLASS main DEFINITION FINAL.
     METHODS: run.
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_object,
-             type TYPE  trobjtype,
-             name TYPE versobjnam,
+             type      TYPE  trobjtype,
+             name      TYPE versobjnam,
+             transport TYPE strkorr,
            END OF ty_object,
 
            BEGIN OF ty_object_version,
              object_type    TYPE versobjtyp,
              object_name    TYPE versobjnam,
              object_version TYPE versno,
+             last_version   TYPE versno,
            END OF ty_object_version,
 
            BEGIN OF ty_output,
@@ -79,6 +81,7 @@ CLASS main DEFINITION FINAL.
     METHODS: read_task,
       get_object IMPORTING iv_task TYPE trkorr,
       get_data,
+      process_versions,
       process_data,
       process_object IMPORTING is_object TYPE ty_object_version,
       set_code IMPORTING is_object TYPE ty_object_version,
@@ -96,6 +99,7 @@ CLASS main IMPLEMENTATION.
   METHOD run.
     read_task( ).
     get_data( ).
+    process_versions( ).
     process_data( ).
     display_output( ).
   ENDMETHOD.
@@ -107,28 +111,40 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_object.
-    DATA: lt_object TYPE STANDARD TABLE OF e071.
+    DATA: lt_object TYPE STANDARD TABLE OF e071,
+          ls_e070   TYPE e070.
 
     CALL FUNCTION 'TMS_WBO_READ_REQUEST'
       EXPORTING
         iv_request = iv_task
+      IMPORTING
+        es_e070    = ls_e070
       TABLES
         tt_e071    = lt_object.
 
     mt_object = VALUE #( BASE mt_object FOR ls_row IN lt_object ( type = ls_row-object
-                                                                  name = ls_row-obj_name ) ).
+                                                                  name = ls_row-obj_name
+                                                                  transport = COND #( WHEN ls_e070-strkorr IS NOT INITIAL THEN ls_e070-strkorr
+                                                                                      ELSE iv_task ) ) ).
   ENDMETHOD.
 
   METHOD get_data.
     CHECK mt_object IS NOT INITIAL.
 
-    SELECT objtype, objname, lastversno
+    SELECT objtype, objname, versno, lastversno
       FROM vrsd
       INTO TABLE @mt_object_version
       FOR ALL ENTRIES IN @mt_object
       WHERE objtype = @mt_object-type
         AND objname = @mt_object-name
-        AND versno = 0.
+        AND korrnum = @mt_object-transport.
+  ENDMETHOD.
+
+  METHOD process_versions.
+    LOOP AT mt_object_version ASSIGNING FIELD-SYMBOL(<lfs_object_version>).
+      <lfs_object_version>-object_version = COND #( WHEN <lfs_object_version>-object_version IS NOT INITIAL THEN <lfs_object_version>-object_version - 1
+                                                    ELSE <lfs_object_version>-last_version ).
+    ENDLOOP.
   ENDMETHOD.
 
   METHOD process_data.
