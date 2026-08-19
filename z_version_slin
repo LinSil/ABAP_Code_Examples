@@ -1,0 +1,257 @@
+TABLES: vrsdynpro.
+
+INCLUDE: rsvcutct, rsvcrslt.
+
+DATA: keep_pos                   TYPE bool,
+      delta_only                 TYPE bool,
+      with_korrnum               TYPE bool,
+      korrtxt_lft                TYPE e07t-as4text,
+      korrtxt_rgt                TYPE e07t-as4text,
+      korrnum_rgt                TYPE vrsd-korrnum,
+      e07t_entry                 TYPE e07t,
+      logdest_rgt                TYPE rfcdes-rfcdest,
+      korrnum_lft                TYPE vrsd-korrnum,
+      logdest_lft                TYPE rfcdes-rfcdest,
+      no_delta                   TYPE bool,
+      gv_ignore_case_differences TYPE bool VALUE 'X',
+      comp_mode                  TYPE sy-index,
+      abaptext_sec               TYPE STANDARD TABLE OF abaptxt255,
+      abaptext_pri               TYPE STANDARD TABLE OF abaptxt255,
+      trdir_sec                  TYPE STANDARD TABLE OF trdir,
+      trdir_pri                  TYPE STANDARD TABLE OF trdir,
+      trdir_delta                TYPE STANDARD TABLE OF xtrdir,
+      abaptext_delta             TYPE STANDARD TABLE OF vxabapt255,
+      version_lft                TYPE vrsd-versno,
+      objtype_lft                TYPE vrsd-objtype,
+      objname_lft                TYPE vrsd-objname,
+      gt_smodilog_lft            TYPE STANDARD TABLE OF smodilog,
+      version_rgt                TYPE vrsd-versno,
+      objtype_rgt                TYPE vrsd-objtype,
+      objname_rgt                TYPE vrsd-objname,
+      gt_smodilog_rgt            TYPE STANDARD TABLE OF smodilog,
+      one_column                 TYPE bool,
+      objtyp1                    TYPE vrsd-objtype,
+      objtyp2                    TYPE vrsd-objtype,
+      gv_transport               TYPE trkorr,
+
+      BEGIN OF fcode_tab OCCURS 5,
+        fcode LIKE sy-ucomm,
+      END OF fcode_tab.
+
+INCLUDE: rsvcrsst.
+
+SELECT-OPTIONS: s_task FOR gv_transport NO INTERVALS OBLIGATORY.
+
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS: run.
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_object,
+             type TYPE  trobjtype,
+             name TYPE versobjnam,
+           END OF ty_object,
+
+           BEGIN OF ty_object_version,
+             object_type    TYPE versobjtyp,
+             object_name    TYPE versobjnam,
+             object_version TYPE versno,
+           END OF ty_object_version,
+
+           BEGIN OF ty_output,
+             object_name TYPE versobjnam,
+             line_number TYPE string,
+             edit_type   TYPE c LENGTH 1,
+             code        TYPE string,
+           END OF ty_output,
+
+           tty_text TYPE STANDARD TABLE OF abaptxt255.
+
+    CONSTANTS: mc_insert    TYPE c LENGTH 1 VALUE '+',
+               mc_delete    TYPE c LENGTH 1 VALUE '-',
+               mc_report    TYPE c LENGTH 4 VALUE 'REPS',
+               mc_interface TYPE c LENGTH 4 VALUE 'SFPI',
+               mc_method    TYPE c LENGTH 4 VALUE 'METH'.
+
+    DATA: mt_object         TYPE STANDARD TABLE OF ty_object,
+          mt_object_version TYPE STANDARD TABLE OF ty_object_version,
+          mt_output         TYPE STANDARD TABLE OF ty_output.
+
+    METHODS: read_task,
+      get_object IMPORTING iv_task TYPE trkorr,
+      get_data,
+      process_data,
+      process_object IMPORTING is_object TYPE ty_object_version,
+      set_code IMPORTING is_object TYPE ty_object_version,
+      process_code IMPORTING is_object TYPE ty_object_version,
+      process_interface IMPORTING is_object TYPE ty_object_version,
+      call_comparison IMPORTING iv_object_name TYPE versobjnam,
+      compare_code IMPORTING it_reference_version TYPE tty_text
+                             it_target_version    TYPE tty_text
+                             iv_object_name       TYPE versobjnam
+                             iv_edit_type         TYPE char1,
+      display_output.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    read_task( ).
+    get_data( ).
+    process_data( ).
+    display_output( ).
+  ENDMETHOD.
+
+  METHOD read_task.
+    LOOP AT s_task ASSIGNING FIELD-SYMBOL(<lfs_task>).
+      get_object( <lfs_task>-low ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD get_object.
+    DATA: lt_object TYPE STANDARD TABLE OF e071.
+
+    CALL FUNCTION 'TMS_WBO_READ_REQUEST'
+      EXPORTING
+        iv_request = iv_task
+      TABLES
+        tt_e071    = lt_object.
+
+    mt_object = VALUE #( BASE mt_object FOR ls_row IN lt_object ( type = ls_row-object
+                                                                  name = ls_row-obj_name ) ).
+  ENDMETHOD.
+
+  METHOD get_data.
+    CHECK mt_object IS NOT INITIAL.
+
+    SELECT objtype, objname, lastversno
+      FROM vrsd
+      INTO TABLE @mt_object_version
+      FOR ALL ENTRIES IN @mt_object
+      WHERE objtype = @mt_object-type
+        AND objname = @mt_object-name
+        AND versno = 0.
+  ENDMETHOD.
+
+  METHOD process_data.
+    LOOP AT mt_object_version ASSIGNING FIELD-SYMBOL(<lfs_object>).
+      process_object( <lfs_object> ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD process_object.
+    set_code( is_object ).
+    call_comparison( is_object-object_name ).
+  ENDMETHOD.
+
+  METHOD set_code.
+    CASE is_object-object_type.
+      WHEN mc_report OR mc_method.
+        process_code( is_object ).
+
+      WHEN mc_interface.
+        process_interface( is_object ).
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD process_code.
+    version_lft  = is_object-object_version + 1.
+    version_rgt  = is_object-object_version.
+    objtype_rgt = objtype_lft = is_object-object_type.
+    objname_rgt = objname_lft = is_object-object_name.
+
+    PERFORM get_versions.
+  ENDMETHOD.
+
+  METHOD process_interface.
+    DATA: lr_target_interface    TYPE REF TO if_fp_interface,
+          lr_reference_interface TYPE REF TO if_fp_interface.
+
+    TRY.
+        lr_target_interface = CAST #( cl_fp_wb_helper=>interface_create_from_version( i_name = CONV #( is_object-object_name )
+                                                                                      i_version = CONV #( is_object-object_version + 1 ) )->get_object(  ) ).
+        lr_reference_interface = CAST #( cl_fp_wb_helper=>interface_create_from_version( i_name = CONV #( is_object-object_name )
+                                                                                         i_version = is_object-object_version )->get_object(  ) ).
+
+        abaptext_sec[] = VALUE #( FOR ls_row IN lr_target_interface->get_interface_data(  )->get_coding(  )->get_forms_coding(  )
+                                  ( line = ls_row ) ).
+        abaptext_pri[] = VALUE #( FOR ls_row IN lr_reference_interface->get_interface_data(  )->get_coding(  )->get_forms_coding(  )
+                                  ( line = ls_row ) ).
+      CATCH cx_fp_api_repository.
+        RETURN.
+      CATCH cx_fp_api_internal.
+        RETURN.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD call_comparison.
+    compare_code( it_reference_version = abaptext_pri[] it_target_version = abaptext_sec[] iv_object_name = iv_object_name iv_edit_type = mc_insert ).
+    compare_code( it_reference_version = abaptext_sec[] it_target_version = abaptext_pri[] iv_object_name = iv_object_name iv_edit_type = mc_delete ).
+  ENDMETHOD.
+
+  METHOD compare_code.
+    CONSTANTS: lc_insertion       TYPE c LENGTH 9 VALUE 'Insertion',
+               lc_begin_of        TYPE c LENGTH 9 VALUE '"BEGIN OF',
+               lc_end_of          TYPE c LENGTH 7 VALUE '"END OF',
+               lc_code_line_limit TYPE int1 VALUE 123.
+
+    DATA: lv_in_comment_block TYPE abap_bool.
+
+    LOOP AT it_target_version ASSIGNING FIELD-SYMBOL(<lfs_target>).
+      DATA(lv_index) = sy-tabix.
+      DATA(lv_line) = condense( CONV string( <lfs_target>-line ) ).
+
+      IF lv_in_comment_block = abap_false.
+        IF NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
+          IF to_upper( <lfs_target>(9) ) = lc_begin_of.
+            lv_in_comment_block = abap_true.
+            APPEND INITIAL LINE TO mt_output ASSIGNING FIELD-SYMBOL(<lfs_output>).
+            <lfs_output> = VALUE #( object_name = iv_object_name line_number = lv_index edit_type = iv_edit_type ).
+
+          ELSEIF iv_edit_type = mc_delete
+            OR ( contains( val = CONV string( <lfs_target>-line ) sub = lc_insertion ) AND iv_edit_type = mc_insert ).
+            APPEND INITIAL LINE TO mt_output ASSIGNING <lfs_output>.
+            <lfs_output> = VALUE #( object_name = iv_object_name line_number = lv_index edit_type = iv_edit_type code = lv_line ).
+          ENDIF.
+        ENDIF.
+
+      ELSE.
+        IF to_upper( <lfs_target>(7) ) = lc_end_of AND NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
+          <lfs_output>-line_number = lv_index.
+          lv_in_comment_block = abap_false.
+
+        ELSE.
+          IF strlen( <lfs_output>-code ) + strlen( lv_line ) > lc_code_line_limit.
+            APPEND INITIAL LINE TO mt_output ASSIGNING <lfs_output>.
+            <lfs_output> = VALUE #( object_name = iv_object_name edit_type = iv_edit_type code = lv_line ).
+
+          ELSE.
+            <lfs_output>-code = |{ <lfs_output>-code } { lv_line }|.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD display_output.
+    TRY.
+        cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lr_alv)
+                                CHANGING t_table = mt_output ).
+      CATCH cx_salv_msg.
+        RETURN.
+    ENDTRY.
+
+    DATA(lo_columns) = lr_alv->get_columns( ).
+
+    TRY.
+        lo_columns->get_column( 'LINE_NUMBER' )->set_long_text( 'Line' ).
+        lo_columns->get_column( 'EDIT_TYPE' )->set_long_text( 'Edit' ).
+        lo_columns->get_column( 'CODE' )->set_long_text( 'Code' ).
+      CATCH cx_salv_not_found.
+        RETURN.
+    ENDTRY.
+    lr_alv->get_columns( )->set_optimize( abap_true ).
+    lr_alv->display( ).
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+  NEW main( )->run( ).
