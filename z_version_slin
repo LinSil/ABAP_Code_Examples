@@ -1,7 +1,5 @@
 TABLES: vrsdynpro.
 
-INCLUDE: rsvcutct, rsvcrslt.
-
 DATA: keep_pos                   TYPE bool,
       delta_only                 TYPE bool,
       with_korrnum               TYPE bool,
@@ -38,7 +36,7 @@ DATA: keep_pos                   TYPE bool,
         fcode LIKE sy-ucomm,
       END OF fcode_tab.
 
-INCLUDE: rsvcrsst.
+INCLUDE: rsvcutct, rsvcrslt, rsvcrsst.
 
 SELECT-OPTIONS: s_task FOR gv_transport NO INTERVALS OBLIGATORY.
 
@@ -47,7 +45,7 @@ CLASS main DEFINITION FINAL.
     METHODS: run.
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_object,
-             type      TYPE  trobjtype,
+             type      TYPE trobjtype,
              name      TYPE versobjnam,
              transport TYPE strkorr,
            END OF ty_object,
@@ -61,7 +59,7 @@ CLASS main DEFINITION FINAL.
 
            BEGIN OF ty_output,
              object_name TYPE versobjnam,
-             line_number TYPE string,
+             line_number TYPE int2,
              edit_type   TYPE c LENGTH 1,
              code        TYPE string,
            END OF ty_output,
@@ -81,8 +79,8 @@ CLASS main DEFINITION FINAL.
     METHODS: read_task,
       get_object IMPORTING iv_task TYPE trkorr,
       get_data,
-      process_versions,
       process_data,
+      set_version CHANGING cs_object_version TYPE ty_object_version,
       process_object IMPORTING is_object TYPE ty_object_version,
       set_code IMPORTING is_object TYPE ty_object_version,
       process_code IMPORTING is_object TYPE ty_object_version,
@@ -92,14 +90,16 @@ CLASS main DEFINITION FINAL.
                              it_target_version    TYPE tty_text
                              iv_object_name       TYPE versobjnam
                              iv_edit_type         TYPE char1,
-      display_output.
+      display_output,
+      set_output_text IMPORTING iv_column TYPE lvc_fname
+                                iv_text   TYPE scrtext
+                                io_column TYPE REF TO cl_salv_columns_table.
 ENDCLASS.
 
 CLASS main IMPLEMENTATION.
   METHOD run.
     read_task( ).
     get_data( ).
-    process_versions( ).
     process_data( ).
     display_output( ).
   ENDMETHOD.
@@ -141,18 +141,17 @@ CLASS main IMPLEMENTATION.
         AND korrnum = @mt_object-transport.
   ENDMETHOD.
 
-  METHOD process_versions.
+  METHOD process_data.
     LOOP AT mt_object_version ASSIGNING FIELD-SYMBOL(<lfs_object_version>).
-      <lfs_object_version>-object_version = COND #( WHEN <lfs_object_version>-object_version IS NOT INITIAL
-                                                      THEN <lfs_object_version>-object_version - 1
-                                                    ELSE <lfs_object_version>-last_version ).
+      set_version( CHANGING cs_object_version = <lfs_object_version> ).
+      process_object( <lfs_object_version> ).
     ENDLOOP.
   ENDMETHOD.
 
-  METHOD process_data.
-    LOOP AT mt_object_version ASSIGNING FIELD-SYMBOL(<lfs_object>).
-      process_object( <lfs_object> ).
-    ENDLOOP.
+  METHOD set_version.
+    cs_object_version-object_version = COND #( WHEN cs_object_version-object_version IS NOT INITIAL
+                                                THEN cs_object_version-object_version - 1
+                                               ELSE cs_object_version-last_version ).
   ENDMETHOD.
 
   METHOD process_object.
@@ -250,15 +249,22 @@ CLASS main IMPLEMENTATION.
 
     DATA(lo_columns) = lr_alv->get_columns( ).
 
+    set_output_text( iv_column = 'LINE_NUMBER' iv_text = 'Line' io_column = lo_columns ).
+    set_output_text( iv_column = 'EDIT_TYPE' iv_text = 'Edit' io_column = lo_columns ).
+    set_output_text( iv_column = 'CODE' iv_text = 'Code' io_column = lo_columns ).
+
+    lr_alv->get_columns( )->set_optimize( abap_true ).
+    lr_alv->display( ).
+  ENDMETHOD.
+
+  METHOD set_output_text.
     TRY.
-        lo_columns->get_column( 'LINE_NUMBER' )->set_long_text( 'Line' ).
-        lo_columns->get_column( 'EDIT_TYPE' )->set_long_text( 'Edit' ).
-        lo_columns->get_column( 'CODE' )->set_long_text( 'Code' ).
+        io_column->get_column( iv_column )->set_long_text( CONV #( iv_text ) ).
+        io_column->get_column( iv_column )->set_medium_text( CONV #( iv_text ) ).
+        io_column->get_column( iv_column )->set_short_text( CONV #( iv_text ) ).
       CATCH cx_salv_not_found.
         RETURN.
     ENDTRY.
-    lr_alv->get_columns( )->set_optimize( abap_true ).
-    lr_alv->display( ).
   ENDMETHOD.
 ENDCLASS.
 
