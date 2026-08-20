@@ -111,8 +111,8 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_object.
-    DATA: lt_object TYPE STANDARD TABLE OF e071,
-          ls_e070   TYPE e070.
+    DATA: ls_e070   TYPE e070,
+          lt_object TYPE STANDARD TABLE OF e071.
 
     CALL FUNCTION 'TMS_WBO_READ_REQUEST'
       EXPORTING
@@ -124,7 +124,8 @@ CLASS main IMPLEMENTATION.
 
     mt_object = VALUE #( BASE mt_object FOR ls_row IN lt_object ( type = ls_row-object
                                                                   name = ls_row-obj_name
-                                                                  transport = COND #( WHEN ls_e070-strkorr IS NOT INITIAL THEN ls_e070-strkorr
+                                                                  transport = COND #( WHEN ls_e070-strkorr IS NOT INITIAL
+                                                                                        THEN ls_e070-strkorr
                                                                                       ELSE iv_task ) ) ).
   ENDMETHOD.
 
@@ -142,7 +143,8 @@ CLASS main IMPLEMENTATION.
 
   METHOD process_versions.
     LOOP AT mt_object_version ASSIGNING FIELD-SYMBOL(<lfs_object_version>).
-      <lfs_object_version>-object_version = COND #( WHEN <lfs_object_version>-object_version IS NOT INITIAL THEN <lfs_object_version>-object_version - 1
+      <lfs_object_version>-object_version = COND #( WHEN <lfs_object_version>-object_version IS NOT INITIAL
+                                                      THEN <lfs_object_version>-object_version - 1
                                                     ELSE <lfs_object_version>-last_version ).
     ENDLOOP.
   ENDMETHOD.
@@ -165,9 +167,6 @@ CLASS main IMPLEMENTATION.
 
       WHEN mc_interface.
         process_interface( is_object ).
-
-      WHEN OTHERS.
-        MESSAGE |Unknown Type { is_object-object_type } { is_object-object_name }| TYPE 'I'.
     ENDCASE.
   ENDMETHOD.
 
@@ -202,8 +201,10 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD call_comparison.
-    compare_code( it_reference_version = abaptext_pri[] it_target_version = abaptext_sec[] iv_object_name = iv_object_name iv_edit_type = mc_insert ).
-    compare_code( it_reference_version = abaptext_sec[] it_target_version = abaptext_pri[] iv_object_name = iv_object_name iv_edit_type = mc_delete ).
+    compare_code( it_reference_version = abaptext_pri[] it_target_version = abaptext_sec[] iv_object_name = iv_object_name
+                  iv_edit_type = mc_insert ).
+    compare_code( it_reference_version = abaptext_sec[] it_target_version = abaptext_pri[] iv_object_name = iv_object_name
+                  iv_edit_type = mc_delete ).
   ENDMETHOD.
 
   METHOD compare_code.
@@ -213,24 +214,23 @@ CLASS main IMPLEMENTATION.
 
     DATA: lv_in_comment_block TYPE abap_bool.
 
-    LOOP AT it_target_version ASSIGNING FIELD-SYMBOL(<lfs_target>).
-      DATA(lv_index) = sy-tabix.
-
+    LOOP AT it_target_version ASSIGNING FIELD-SYMBOL(<lfs_target>) WHERE line IS NOT INITIAL.
       IF lv_in_comment_block = abap_false.
         IF NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
           IF to_upper( <lfs_target>(9) ) = lc_begin_of.
             lv_in_comment_block = abap_true.
-            APPEND VALUE #( object_name = iv_object_name line_number = lv_index + 1 edit_type = iv_edit_type ) TO mt_output.
+            APPEND VALUE #( object_name = iv_object_name line_number = sy-tabix + 1 edit_type = iv_edit_type ) TO mt_output.
 
           ELSEIF iv_edit_type = mc_delete
             OR ( contains( val = <lfs_target>-line sub = lc_insertion ) AND iv_edit_type = mc_insert ).
-            APPEND VALUE #( object_name = iv_object_name line_number = lv_index edit_type = iv_edit_type code = <lfs_target>-line ) TO mt_output.
+            APPEND VALUE #( object_name = iv_object_name line_number = sy-tabix edit_type = iv_edit_type code = <lfs_target>-line )
+              TO mt_output.
           ENDIF.
         ENDIF.
 
-      ELSEIF <lfs_target>-line IS NOT INITIAL.
+      ELSE.
         IF to_upper( <lfs_target>(7) ) = lc_end_of AND NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
-          mt_output[ lines( mt_output ) ]-line_number = lv_index - 1.
+          mt_output[ lines( mt_output ) ]-line_number = sy-tabix - 1.
           lv_in_comment_block = abap_false.
 
         ELSE.
