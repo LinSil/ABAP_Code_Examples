@@ -165,6 +165,9 @@ CLASS main IMPLEMENTATION.
 
       WHEN mc_interface.
         process_interface( is_object ).
+
+      WHEN OTHERS.
+        MESSAGE |Unknown Type { is_object-object_type } { is_object-object_name }| TYPE 'I'.
     ENDCASE.
   ENDMETHOD.
 
@@ -204,44 +207,34 @@ CLASS main IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD compare_code.
-    CONSTANTS: lc_insertion       TYPE c LENGTH 9 VALUE 'Insertion',
-               lc_begin_of        TYPE c LENGTH 9 VALUE '"BEGIN OF',
-               lc_end_of          TYPE c LENGTH 7 VALUE '"END OF',
-               lc_code_line_limit TYPE int1 VALUE 123.
+    CONSTANTS: lc_insertion TYPE c LENGTH 9 VALUE 'Insertion',
+               lc_begin_of  TYPE c LENGTH 9 VALUE '"BEGIN OF',
+               lc_end_of    TYPE c LENGTH 7 VALUE '"END OF'.
 
     DATA: lv_in_comment_block TYPE abap_bool.
 
     LOOP AT it_target_version ASSIGNING FIELD-SYMBOL(<lfs_target>).
       DATA(lv_index) = sy-tabix.
-      DATA(lv_line) = condense( CONV string( <lfs_target>-line ) ).
 
       IF lv_in_comment_block = abap_false.
         IF NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
           IF to_upper( <lfs_target>(9) ) = lc_begin_of.
             lv_in_comment_block = abap_true.
-            APPEND INITIAL LINE TO mt_output ASSIGNING FIELD-SYMBOL(<lfs_output>).
-            <lfs_output> = VALUE #( object_name = iv_object_name line_number = lv_index edit_type = iv_edit_type ).
+            APPEND VALUE #( object_name = iv_object_name line_number = lv_index + 1 edit_type = iv_edit_type ) TO mt_output.
 
           ELSEIF iv_edit_type = mc_delete
-            OR ( contains( val = CONV string( <lfs_target>-line ) sub = lc_insertion ) AND iv_edit_type = mc_insert ).
-            APPEND INITIAL LINE TO mt_output ASSIGNING <lfs_output>.
-            <lfs_output> = VALUE #( object_name = iv_object_name line_number = lv_index edit_type = iv_edit_type code = lv_line ).
+            OR ( contains( val = <lfs_target>-line sub = lc_insertion ) AND iv_edit_type = mc_insert ).
+            APPEND VALUE #( object_name = iv_object_name line_number = lv_index edit_type = iv_edit_type code = <lfs_target>-line ) TO mt_output.
           ENDIF.
         ENDIF.
 
-      ELSE.
+      ELSEIF <lfs_target>-line IS NOT INITIAL.
         IF to_upper( <lfs_target>(7) ) = lc_end_of AND NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
-          <lfs_output>-line_number = lv_index.
+          mt_output[ lines( mt_output ) ]-line_number = lv_index - 1.
           lv_in_comment_block = abap_false.
 
         ELSE.
-          IF strlen( <lfs_output>-code ) + strlen( lv_line ) > lc_code_line_limit.
-            APPEND INITIAL LINE TO mt_output ASSIGNING <lfs_output>.
-            <lfs_output> = VALUE #( object_name = iv_object_name edit_type = iv_edit_type code = lv_line ).
-
-          ELSE.
-            <lfs_output>-code = |{ <lfs_output>-code } { lv_line }|.
-          ENDIF.
+          APPEND VALUE #( object_name = iv_object_name edit_type = iv_edit_type code = <lfs_target>-line ) TO mt_output.
         ENDIF.
       ENDIF.
     ENDLOOP.
