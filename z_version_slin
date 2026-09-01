@@ -12,7 +12,7 @@ DATA: keep_pos                   TYPE bool,
       logdest_lft                TYPE rfcdes-rfcdest,
       no_delta                   TYPE bool,
       gv_ignore_case_differences TYPE bool VALUE 'X',
-      comp_mode                  TYPE sy-index,
+      comp_mode                  TYPE vers_comp,
       abaptext_sec               TYPE STANDARD TABLE OF abaptxt255,
       abaptext_pri               TYPE STANDARD TABLE OF abaptxt255,
       trdir_sec                  TYPE STANDARD TABLE OF trdir,
@@ -33,18 +33,27 @@ DATA: keep_pos                   TYPE bool,
       gv_transport               TYPE trkorr,
 
       BEGIN OF fcode_tab OCCURS 5,
-        fcode LIKE sy-ucomm,
+        fcode TYPE sy-ucomm,
       END OF fcode_tab.
 
 INCLUDE: rsvcutct, rsvcrslt, rsvcrsst.
 
 SELECT-OPTIONS: s_task FOR gv_transport NO INTERVALS OBLIGATORY.
 
+PARAMETERS: p_custom AS CHECKBOX.
+
 CLASS main DEFINITION FINAL.
   PUBLIC SECTION.
     METHODS: run.
   PRIVATE SECTION.
-    TYPES: BEGIN OF ty_object,
+    TYPES: BEGIN OF ty_index,
+             original_index   TYPE int2,
+             normalized_index TYPE int2,
+           END OF ty_index,
+
+           tty_indexes TYPE SORTED TABLE OF ty_index WITH UNIQUE KEY original_index,
+
+           BEGIN OF ty_object,
              type      TYPE trobjtype,
              name      TYPE versobjnam,
              transport TYPE strkorr,
@@ -57,23 +66,43 @@ CLASS main DEFINITION FINAL.
              last_version   TYPE versno,
            END OF ty_object_version,
 
+           BEGIN OF ty_text,
+             line     TYPE text255,
+             line_num TYPE int2,
+           END OF ty_text,
+
+           BEGIN OF ty_mapping,
+             new_line TYPE int2,
+             old_line TYPE int2,
+           END OF ty_mapping,
+
+           BEGIN OF ty_seen,
+             code_string TYPE string,
+             indexes     TYPE tty_indexes,
+           END OF ty_seen,
+
            BEGIN OF ty_output,
              object_name TYPE versobjnam,
              line_number TYPE int2,
-             edit_type   TYPE c LENGTH 1,
-             code        TYPE string,
+             new_code    TYPE string,
+             old_code    TYPE string,
            END OF ty_output,
 
-           tty_text TYPE STANDARD TABLE OF abaptxt255.
+           tty_abaptxt TYPE STANDARD TABLE OF abaptxt255 WITH DEFAULT KEY,
+           tty_text    TYPE STANDARD TABLE OF ty_text WITH DEFAULT KEY,
+           tty_seen    TYPE HASHED TABLE OF ty_seen WITH UNIQUE KEY code_string.
 
-    CONSTANTS: mc_insert    TYPE c LENGTH 1 VALUE '+',
-               mc_delete    TYPE c LENGTH 1 VALUE '-',
-               mc_report    TYPE c LENGTH 4 VALUE 'REPS',
+    CONSTANTS: mc_report    TYPE c LENGTH 4 VALUE 'REPS',
                mc_interface TYPE c LENGTH 4 VALUE 'SFPI',
-               mc_method    TYPE c LENGTH 4 VALUE 'METH'.
+               mc_method    TYPE c LENGTH 4 VALUE 'METH',
+               mc_insert    TYPE c LENGTH 1 VALUE '+',
+               mc_delete    TYPE c LENGTH 1 VALUE '-'.
 
     DATA: mt_object         TYPE STANDARD TABLE OF ty_object,
           mt_object_version TYPE STANDARD TABLE OF ty_object_version,
+          mt_new_code       TYPE tty_seen,
+          mt_old_code       TYPE tty_seen,
+          mt_mapping        TYPE HASHED TABLE OF ty_mapping WITH UNIQUE KEY new_line old_line,
           mt_output         TYPE STANDARD TABLE OF ty_output.
 
     METHODS: read_task,
@@ -86,10 +115,24 @@ CLASS main DEFINITION FINAL.
       process_code IMPORTING is_object TYPE ty_object_version,
       process_interface IMPORTING is_object TYPE ty_object_version,
       call_comparison IMPORTING iv_object_name TYPE versobjnam,
-      compare_code IMPORTING it_reference_version TYPE tty_text
-                             it_target_version    TYPE tty_text
-                             iv_object_name       TYPE versobjnam
-                             iv_edit_type         TYPE char1,
+      custom_difference,
+      normalize_code IMPORTING it_code          TYPE tty_abaptxt
+                     CHANGING  ct_code          TYPE tty_seen
+                     RETURNING VALUE(rt_output) TYPE tty_text,
+      custom_comparison IMPORTING it_reference_code TYPE tty_text
+                                  it_target_code    TYPE tty_text
+                                  iv_flag           TYPE c,
+      add_mapping IMPORTING iv_flag            TYPE c
+                            iv_reference_index TYPE int2
+                  CHANGING  cs_mapping         TYPE ty_mapping,
+      search_code IMPORTING iv_reference_index   TYPE int2
+                            it_reference_indexes TYPE tty_indexes
+                  RETURNING VALUE(rv_output)     TYPE ty_index,
+      validate_mapping,
+      clear_custom_data,
+      populate_output IMPORTING iv_object_name TYPE versobjnam,
+      call_delta,
+      standard_difference IMPORTING iv_object_name TYPE versobjnam,
       display_output,
       set_output_text IMPORTING iv_column TYPE lvc_fname
                                 iv_text   TYPE scrtext
@@ -125,7 +168,7 @@ CLASS main IMPLEMENTATION.
     mt_object = VALUE #( BASE mt_object FOR ls_row IN lt_object ( type = ls_row-object
                                                                   name = ls_row-obj_name
                                                                   transport = COND #( WHEN ls_e070-strkorr IS NOT INITIAL
-                                                                                        THEN ls_e070-strkorr
+                                                                                      THEN ls_e070-strkorr
                                                                                       ELSE iv_task ) ) ).
   ENDMETHOD.
 
@@ -150,7 +193,7 @@ CLASS main IMPLEMENTATION.
 
   METHOD set_version.
     cs_object_version-object_version = COND #( WHEN cs_object_version-object_version IS NOT INITIAL
-                                                THEN cs_object_version-object_version - 1
+                                               THEN cs_object_version-object_version - 1
                                                ELSE cs_object_version-last_version ).
   ENDMETHOD.
 
@@ -193,50 +236,179 @@ CLASS main IMPLEMENTATION.
         abaptext_pri[] = VALUE #( FOR ls_row IN lr_reference_interface->get_interface_data(  )->get_coding(  )->get_forms_coding(  )
                                   ( line = ls_row ) ).
       CATCH cx_fp_api_repository.
-        RETURN.
+        MESSAGE |Issue with repository API for { is_object-object_name }| TYPE 'I'.
       CATCH cx_fp_api_internal.
-        RETURN.
+        MESSAGE |Issue with internal API for { is_object-object_name }| TYPE 'I'.
     ENDTRY.
   ENDMETHOD.
 
   METHOD call_comparison.
-    compare_code( it_reference_version = abaptext_pri[] it_target_version = abaptext_sec[] iv_object_name = iv_object_name
-                  iv_edit_type = mc_insert ).
-    compare_code( it_reference_version = abaptext_sec[] it_target_version = abaptext_pri[] iv_object_name = iv_object_name
-                  iv_edit_type = mc_delete ).
+    IF p_custom IS NOT INITIAL.
+      custom_difference( ).
+      "validate_mapping( ). "Meant to validate mapping but current logic implementation should have no issues
+      populate_output( iv_object_name ).
+      clear_custom_data( ).
+
+    ELSE.
+      call_delta( ).
+      standard_difference( iv_object_name ).
+    ENDIF.
   ENDMETHOD.
 
-  METHOD compare_code.
-    CONSTANTS: lc_insertion TYPE c LENGTH 9 VALUE 'Insertion',
-               lc_begin_of  TYPE c LENGTH 9 VALUE '"BEGIN OF',
-               lc_end_of    TYPE c LENGTH 7 VALUE '"END OF'.
+  METHOD custom_difference.
+    DATA(it_old) = normalize_code( EXPORTING it_code = abaptext_pri[] CHANGING ct_code = mt_old_code ).
+    DATA(it_new) = normalize_code( EXPORTING it_code = abaptext_sec[] CHANGING ct_code = mt_new_code ).
+    custom_comparison( it_reference_code = it_old it_target_code = it_new iv_flag = mc_insert ).
+    custom_comparison( it_reference_code = it_new it_target_code = it_old iv_flag = mc_delete ).
+  ENDMETHOD.
 
-    DATA: lv_in_comment_block TYPE abap_bool.
+  METHOD normalize_code.
+    CONSTANTS: lc_star  TYPE c LENGTH 1 VALUE '*',
+               lc_quote TYPE c LENGTH 1 VALUE '"'.
 
-    LOOP AT it_target_version ASSIGNING FIELD-SYMBOL(<lfs_target>) WHERE line IS NOT INITIAL.
-      IF lv_in_comment_block = abap_false.
-        IF NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
-          IF to_upper( <lfs_target>(9) ) = lc_begin_of.
-            lv_in_comment_block = abap_true.
-            APPEND VALUE #( object_name = iv_object_name line_number = sy-tabix + 1 edit_type = iv_edit_type ) TO mt_output.
+    DATA(lv_normalized_index) = 1.
 
-          ELSEIF iv_edit_type = mc_delete
-            OR ( contains( val = <lfs_target>-line sub = lc_insertion ) AND iv_edit_type = mc_insert ).
-            APPEND VALUE #( object_name = iv_object_name line_number = sy-tabix edit_type = iv_edit_type code = <lfs_target>-line )
-              TO mt_output.
-          ENDIF.
+    LOOP AT it_code ASSIGNING FIELD-SYMBOL(<lfs_code>) WHERE line IS NOT INITIAL.
+      DATA(lv_original_index) = sy-tabix.
+      DATA(lv_first_char) = substring( val = <lfs_code>-line len = 1 ).
+
+      IF lv_first_char = lc_star OR lv_first_char = lc_quote.
+        CONTINUE.
+      ENDIF.
+
+      SPLIT <lfs_code>-line AT lc_quote INTO DATA(lv_code) DATA(lv_comment).
+
+      rt_output = VALUE #( BASE rt_output ( line = to_upper( condense( lv_code ) )
+                                            line_num = lv_original_index ) ).
+
+      IF NOT line_exists( ct_code[ code_string = lv_code ] ).
+        INSERT VALUE #( code_string = lv_code ) INTO TABLE ct_code.
+      ENDIF.
+
+      ct_code[ code_string = lv_code ]-indexes = VALUE #( BASE ct_code[ code_string = lv_code ]-indexes ( original_index = lv_original_index
+                                                                                                          normalized_index = lv_normalized_index ) ).
+
+      lv_normalized_index = lv_normalized_index + 1.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD custom_comparison.
+    DATA(lv_reference_index) = 1.
+
+    LOOP AT it_target_code ASSIGNING FIELD-SYMBOL(<lfs_target>).
+      DATA(lv_target_index) = <lfs_target>-line_num.
+      DATA(ls_mapping) = VALUE ty_mapping( new_line = COND #( WHEN iv_flag = mc_insert THEN lv_target_index )
+                                           old_line = COND #( WHEN iv_flag = mc_delete THEN lv_target_index ) ).
+
+      IF iv_flag = mc_delete AND line_exists( mt_mapping[ old_line = lv_target_index ] ) OR lv_reference_index > lines( it_reference_code ).
+        CONTINUE.
+      ENDIF.
+
+      IF it_reference_code[ lv_reference_index ]-line = <lfs_target>-line.
+        add_mapping( EXPORTING iv_flag = iv_flag iv_reference_index = VALUE #( it_reference_code[ lv_reference_index ]-line_num )
+                     CHANGING cs_mapping = ls_mapping ).
+        lv_reference_index = lv_reference_index + 1.
+
+      ELSEIF iv_flag = mc_insert AND line_exists( mt_old_code[ code_string = <lfs_target>-line ] ).
+        DATA(lv_temp_index) = search_code( iv_reference_index = VALUE #( it_reference_code[ lv_reference_index ]-line_num )
+                                           it_reference_indexes = mt_old_code[ code_string = <lfs_target>-line ]-indexes ).
+
+        IF lv_temp_index IS NOT INITIAL.
+          add_mapping( EXPORTING iv_flag = iv_flag iv_reference_index = lv_temp_index-original_index
+                       CHANGING cs_mapping = ls_mapping ).
+
+          lv_reference_index = lv_temp_index-normalized_index + 1.
         ENDIF.
+      ENDIF.
 
-      ELSE.
-        IF to_upper( <lfs_target>(7) ) = lc_end_of AND NOT line_exists( it_reference_version[ line = <lfs_target>-line ] ).
-          mt_output[ lines( mt_output ) ]-line_number = sy-tabix - 1.
-          lv_in_comment_block = abap_false.
+      mt_mapping = VALUE #( BASE mt_mapping ( ls_mapping ) ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD add_mapping.
+    CASE iv_flag.
+      WHEN mc_insert.
+        cs_mapping-old_line = iv_reference_index.
+
+      WHEN mc_delete.
+        cs_mapping-new_line = iv_reference_index.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD search_code.
+    LOOP AT it_reference_indexes ASSIGNING FIELD-SYMBOL(<lfs_reference>) WHERE original_index > iv_reference_index.
+      IF line_exists( mt_mapping[ old_line = <lfs_reference>-original_index ] ).
+        CONTINUE.
+      ENDIF.
+
+      rv_output = <lfs_reference>.
+      RETURN.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD validate_mapping.
+    DATA(lv_old_max) = 0.
+
+    LOOP AT mt_mapping ASSIGNING FIELD-SYMBOL(<lfs_mapping>).
+      IF <lfs_mapping>-new_line IS NOT INITIAL AND <lfs_mapping>-old_line IS NOT INITIAL.
+        IF <lfs_mapping>-old_line < lv_old_max.
+          MESSAGE |Wrong mapping with new line { <lfs_mapping>-new_line }| TYPE 'I'.
 
         ELSE.
-          APPEND VALUE #( object_name = iv_object_name edit_type = iv_edit_type code = <lfs_target>-line ) TO mt_output.
+          lv_old_max = <lfs_mapping>-old_line.
         ENDIF.
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
+
+  METHOD clear_custom_data.
+    CLEAR: mt_new_code,
+           mt_old_code,
+           mt_mapping.
+  ENDMETHOD.
+
+  METHOD populate_output.
+    LOOP AT mt_mapping ASSIGNING FIELD-SYMBOL(<lfs_mapping>).
+      IF <lfs_mapping>-new_line IS INITIAL OR <lfs_mapping>-old_line IS INITIAL.
+
+        mt_output = VALUE #( BASE mt_output ( COND #( WHEN <lfs_mapping>-new_line IS NOT INITIAL
+                                                      THEN VALUE #( object_name = iv_object_name
+                                                                    line_number = <lfs_mapping>-new_line
+                                                                    new_code = abaptext_sec[ <lfs_mapping>-new_line ] )
+                                                      ELSE VALUE #( object_name = iv_object_name
+                                                                    line_number = <lfs_mapping>-old_line
+                                                                    old_code = abaptext_pri[ <lfs_mapping>-old_line ] ) ) ) ).
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD call_delta.
+    SELECT SINGLE comp_mode
+        FROM vers_udefs
+        INTO @comp_mode
+        WHERE uname = @sy-uname.
+
+    CALL FUNCTION 'SVRS_COMPUTE_DELTA_REPS'
+      EXPORTING
+        compare_mode            = CONV sy-index( comp_mode )
+        ignore_case_differences = abap_true
+      TABLES
+        texttab_old             = abaptext_sec
+        texttab_new             = abaptext_pri
+        trdirtab_old            = trdir_sec
+        trdirtab_new            = trdir_pri
+        trdir_delta             = trdir_delta
+        text_delta              = abaptext_delta.
+  ENDMETHOD.
+
+  METHOD standard_difference.
+    CONSTANTS: lc_insert_flag TYPE sychar04 VALUE 'I'.
+
+    mt_output = VALUE #( BASE mt_output FOR
+                          ls_row IN abaptext_delta ( object_name = iv_object_name
+                                                     line_number = ls_row-number
+                                                     new_code = COND #( WHEN ls_row-vrsflag <> lc_insert_flag THEN ls_row-line )
+                                                     old_code = COND #( WHEN ls_row-vrsflag = lc_insert_flag THEN ls_row-line ) ) ).
   ENDMETHOD.
 
   METHOD display_output.
@@ -251,7 +423,8 @@ CLASS main IMPLEMENTATION.
 
     set_output_text( iv_column = 'LINE_NUMBER' iv_text = 'Line' io_column = lo_columns ).
     set_output_text( iv_column = 'EDIT_TYPE' iv_text = 'Edit' io_column = lo_columns ).
-    set_output_text( iv_column = 'CODE' iv_text = 'Code' io_column = lo_columns ).
+    set_output_text( iv_column = 'NEW_CODE' iv_text = 'New Code' io_column = lo_columns ).
+    set_output_text( iv_column = 'OLD_CODE' iv_text = 'Old Code' io_column = lo_columns ).
 
     lr_alv->get_columns( )->set_optimize( abap_true ).
     lr_alv->display( ).
