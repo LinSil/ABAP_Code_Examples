@@ -47,7 +47,7 @@ CLASS main DEFINITION FINAL.
     METHODS: run.
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_index,
-             original_index   TYPE int2,
+             original_index   TYPE syst_tabix,
              normalized_index TYPE int2,
            END OF ty_index,
 
@@ -67,13 +67,13 @@ CLASS main DEFINITION FINAL.
            END OF ty_object_version,
 
            BEGIN OF ty_text,
-             line     TYPE text255,
-             line_num TYPE int2,
+             line     TYPE string,
+             line_num TYPE syst_tabix,
            END OF ty_text,
 
            BEGIN OF ty_mapping,
-             new_line TYPE int2,
-             old_line TYPE int2,
+             new_line TYPE syst_tabix,
+             old_line TYPE syst_tabix,
            END OF ty_mapping,
 
            BEGIN OF ty_seen,
@@ -83,9 +83,9 @@ CLASS main DEFINITION FINAL.
 
            BEGIN OF ty_output,
              object_name TYPE versobjnam,
-             line_number TYPE int2,
-             new_code    TYPE string,
-             old_code    TYPE string,
+             flag        TYPE char1,
+             line_number TYPE syst_tabix,
+             code_string TYPE text255,
            END OF ty_output,
 
            tty_abaptxt TYPE STANDARD TABLE OF abaptxt255 WITH DEFAULT KEY,
@@ -123,9 +123,9 @@ CLASS main DEFINITION FINAL.
                                   it_target_code    TYPE tty_text
                                   iv_flag           TYPE c,
       add_mapping IMPORTING iv_flag            TYPE c
-                            iv_reference_index TYPE int2
+                            iv_reference_index TYPE syst_tabix
                   CHANGING  cs_mapping         TYPE ty_mapping,
-      search_code IMPORTING iv_reference_index   TYPE int2
+      search_code IMPORTING iv_reference_index   TYPE syst_tabix
                             it_reference_indexes TYPE tty_indexes
                   RETURNING VALUE(rv_output)     TYPE ty_index,
       validate_mapping,
@@ -285,9 +285,9 @@ CLASS main IMPLEMENTATION.
         INSERT VALUE #( code_string = lv_code ) INTO TABLE ct_code.
       ENDIF.
 
-      ct_code[ code_string = lv_code ]-indexes = VALUE #( BASE ct_code[ code_string = lv_code ]-indexes ( original_index = lv_original_index
-                                                                                                          normalized_index = lv_normalized_index ) ).
-
+      ct_code[ code_string = lv_code ]-indexes = VALUE #( BASE ct_code[ code_string = lv_code ]-indexes
+                                                                        ( original_index = lv_original_index
+                                                                          normalized_index = lv_normalized_index ) ).
       lv_normalized_index = lv_normalized_index + 1.
     ENDLOOP.
   ENDMETHOD.
@@ -300,7 +300,8 @@ CLASS main IMPLEMENTATION.
       DATA(ls_mapping) = VALUE ty_mapping( new_line = COND #( WHEN iv_flag = mc_insert THEN lv_target_index )
                                            old_line = COND #( WHEN iv_flag = mc_delete THEN lv_target_index ) ).
 
-      IF iv_flag = mc_delete AND line_exists( mt_mapping[ old_line = lv_target_index ] ) OR lv_reference_index > lines( it_reference_code ).
+      IF iv_flag = mc_delete AND line_exists( mt_mapping[ old_line = lv_target_index ] )
+        OR lv_reference_index > lines( it_reference_code ).
         CONTINUE.
       ENDIF.
 
@@ -373,11 +374,13 @@ CLASS main IMPLEMENTATION.
 
         mt_output = VALUE #( BASE mt_output ( COND #( WHEN <lfs_mapping>-new_line IS NOT INITIAL
                                                       THEN VALUE #( object_name = iv_object_name
+                                                                    flag = mc_insert
                                                                     line_number = <lfs_mapping>-new_line
-                                                                    new_code = abaptext_sec[ <lfs_mapping>-new_line ] )
+                                                                    code_string = abaptext_sec[ <lfs_mapping>-new_line ] )
                                                       ELSE VALUE #( object_name = iv_object_name
+                                                                    flag = mc_delete
                                                                     line_number = <lfs_mapping>-old_line
-                                                                    old_code = abaptext_pri[ <lfs_mapping>-old_line ] ) ) ) ).
+                                                                    code_string = abaptext_pri[ <lfs_mapping>-old_line ] ) ) ) ).
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
@@ -406,9 +409,10 @@ CLASS main IMPLEMENTATION.
 
     mt_output = VALUE #( BASE mt_output FOR
                           ls_row IN abaptext_delta ( object_name = iv_object_name
+                                                     flag = COND #( WHEN ls_row-vrsflag <> lc_insert_flag THEN mc_insert
+                                                                    ELSE mc_delete )
                                                      line_number = ls_row-number
-                                                     new_code = COND #( WHEN ls_row-vrsflag <> lc_insert_flag THEN ls_row-line )
-                                                     old_code = COND #( WHEN ls_row-vrsflag = lc_insert_flag THEN ls_row-line ) ) ).
+                                                     code_string = ls_row-line ) ).
   ENDMETHOD.
 
   METHOD display_output.
@@ -422,9 +426,8 @@ CLASS main IMPLEMENTATION.
     DATA(lo_columns) = lr_alv->get_columns( ).
 
     set_output_text( iv_column = 'LINE_NUMBER' iv_text = 'Line' io_column = lo_columns ).
-    set_output_text( iv_column = 'EDIT_TYPE' iv_text = 'Edit' io_column = lo_columns ).
-    set_output_text( iv_column = 'NEW_CODE' iv_text = 'New Code' io_column = lo_columns ).
-    set_output_text( iv_column = 'OLD_CODE' iv_text = 'Old Code' io_column = lo_columns ).
+    set_output_text( iv_column = 'FLAG' iv_text = 'Edit' io_column = lo_columns ).
+    set_output_text( iv_column = 'CODE_STRING' iv_text = 'Code' io_column = lo_columns ).
 
     lr_alv->get_columns( )->set_optimize( abap_true ).
     lr_alv->display( ).
