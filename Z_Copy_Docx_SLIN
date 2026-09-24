@@ -1,22 +1,25 @@
-PARAMETERS: p_source TYPE string DEFAULT 'INSERT SOURCE FILE' OBLIGATORY,
-            p_target TYPE string DEFAULT 'INSERT TARGET DIRECTORY' OBLIGATORY,
+PARAMETERS: p_file   TYPE string OBLIGATORY,
+            p_path   TYPE string OBLIGATORY,
+            p_folder TYPE string OBLIGATORY,
             p_name   TYPE string OBLIGATORY.
 
 CLASS main DEFINITION FINAL.
   PUBLIC SECTION.
-    CLASS-METHODS: file_search_help CHANGING cv_file TYPE string.
+    CLASS-METHODS: file_search_help CHANGING cv_file TYPE string,
+      directory_search_help CHANGING cv_path TYPE string.
 
     METHODS: run.
   PRIVATE SECTION.
-    CONSTANTS: mc_dev_doc TYPE c LENGTH 12 VALUE 'Dev_Doc.docx'.
-
     TYPES: ty_data TYPE x LENGTH 255.
 
     DATA: mt_data TYPE STANDARD TABLE OF ty_data.
 
-    METHODS: download_source,
-      create_directory,
-      upload_target.
+    METHODS: download_source IMPORTING iv_file TYPE string,
+      create_directory IMPORTING iv_directory TYPE string,
+      get_extension IMPORTING iv_file          TYPE string
+                    RETURNING VALUE(rv_output) TYPE string,
+      upload_target IMPORTING iv_directory TYPE string
+                              iv_name      TYPE string.
 ENDCLASS.
 
 CLASS main IMPLEMENTATION.
@@ -32,37 +35,57 @@ CLASS main IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+  METHOD directory_search_help.
+    cl_gui_frontend_services=>directory_browse( CHANGING selected_folder = cv_path ).
+  ENDMETHOD.
+
   METHOD run.
-    download_source( ).
-    create_directory( ).
-    upload_target( ).
+    download_source( p_file ).
+    create_directory( |{ p_path }\\{ p_folder }| ).
+    upload_target( iv_directory = |{ p_path }\\{ p_folder }| iv_name = p_name ).
   ENDMETHOD.
 
   METHOD download_source.
-    cl_gui_frontend_services=>gui_upload( EXPORTING filename = p_source
+    cl_gui_frontend_services=>gui_upload( EXPORTING filename = iv_file
                                                     filetype = 'BIN'
                                           CHANGING data_tab = mt_data ).
+
+    IF mt_data IS INITIAL.
+      MESSAGE |Failed to download file { iv_file }| TYPE 'E'.
+    ENDIF.
   ENDMETHOD.
 
   METHOD create_directory.
     DATA: lv_rc TYPE i.
 
-    cl_gui_frontend_services=>directory_create( EXPORTING directory = |{ p_target }\\{ p_name }|
-                                                CHANGING rc =  lv_rc ).
+    IF NOT cl_gui_frontend_services=>directory_exist( directory = iv_directory ).
+      cl_gui_frontend_services=>directory_create( EXPORTING directory = iv_directory
+                                                  CHANGING rc =  lv_rc ).
+
+      IF lv_rc IS NOT INITIAL.
+        MESSAGE |Could not create directory { iv_directory }| TYPE 'E'.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD get_extension.
+    CONSTANTS: lc_dot TYPE c LENGTH 1 VALUE '.'.
+
+    SPLIT iv_file AT lc_dot INTO DATA(lv_left) rv_output.
   ENDMETHOD.
 
   METHOD upload_target.
-    cl_gui_frontend_services=>gui_download( EXPORTING filename = |{ p_target }\\{ p_name }\\{ mc_dev_doc }|
+    cl_gui_frontend_services=>gui_download( EXPORTING filename = |{ iv_directory }\\{ iv_name }.{ get_extension( p_file ) }|
                                                       filetype = 'BIN'
                                             CHANGING data_tab = mt_data ).
   ENDMETHOD.
 ENDCLASS.
 
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_source.
-  main=>file_search_help( CHANGING cv_file = p_source ).
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  main=>file_search_help( CHANGING cv_file = p_file ).
 
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_target.
-  main=>file_search_help( CHANGING cv_file = p_target ).
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
+  main=>directory_search_help( CHANGING cv_path = p_path ).
 
 START-OF-SELECTION.
   NEW main( )->run( ).
