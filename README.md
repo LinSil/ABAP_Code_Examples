@@ -162,3 +162,69 @@ If the user wants to strictly search for land1, they can check the checkbox to o
 Here you can see less results by filtering to only show data where their whole variable name is land1.
 
 <img width="150" height="183" alt="image" src="https://github.com/user-attachments/assets/a5a2fab7-0ce6-4767-9319-2237268d4408" />
+
+Z_version_slin, created in ECC so it should run on any SAP system that supports SE38.
+
+This was created as a POC to see if it was possible to get access to report's code within a report and send that data into an external AI.
+
+This report allows the user to enter a transport number, and a checkbox to try my custom code comparison logic. I haven't spend a lot of time
+testing my custom logic but the idea was to try to catch certain code changes that were missed in the standard.
+
+<img width="460" height="45" alt="image" src="https://github.com/user-attachments/assets/f3087cce-716a-40d1-9df5-4792052203f4" />
+
+In this example, when checking standard version management it shows this as an update, saying line 15 of the new code replaced line 11 of
+the old code. However the logic aren't related, the old code is declaring a structure variable while the new code is declaring a constant.
+
+<img width="898" height="15" alt="image" src="https://github.com/user-attachments/assets/d520c8f4-e0cf-413b-91ff-bc964efbd240" />
+
+And only using standard, I didn't see any data that indicates the reference to the original line for this update. So when displaying all of
+the changes, I can only print the new line as an new code.
+
+<img width="539" height="151" alt="image" src="https://github.com/user-attachments/assets/ec1cebc2-e5f8-4033-8a64-9e267d9b98e9" />
+
+In my custom comparison, I assume there is no such thing as an update. So either code is removed or code is added. With the logic flow it
+shows inserts before showing deletes. So with my custom logic, it does pick up the line that was marked as updated in standard as a delete.
+So it appears at the second half of the data.
+
+<img width="538" height="69" alt="image" src="https://github.com/user-attachments/assets/38c9eaa3-a619-4794-b7c1-43c68436d933" />
+
+<img width="326" height="22" alt="image" src="https://github.com/user-attachments/assets/c422f55b-dd78-4b5d-8d7b-ead8371be3bc" />
+
+This report does allows multiple transports to be entered in selection screen and it will just display all of the code changes grouped by object.
+It will also be using the version within that transport. So let's say a report's latest version is 10, and the transport used in selection screen
+was when the report's latest version was 8. It will compare version 8 and 7 not 10 and 9.
+
+Z_XSD_slin, this was created in S4 so it may need adjustments to work in ECC.
+
+This is another POC that I was testing. The idea came when my team was trying to use XML based Adobe forms. I was curious if I could try to design
+a report that could create the XSD file that XML Adobe forms needed. I don't remember taking this seriously since I think there was a standard way
+of creating XSD files this was never planned to be used.
+
+This report allows the user to check if this is a new XSD file, Name of the structure, checkbox for complex types, checkbox for modular if not complex,
+input for type if modular, directory to save the XSD file, elements input, and type inputs.
+
+<img width="594" height="185" alt="image" src="https://github.com/user-attachments/assets/f29a8c32-4742-4859-866f-c6c765fa46c4" />
+
+<img width="447" height="176" alt="image" src="https://github.com/user-attachments/assets/cf87d0a0-1bd6-4564-b9a7-e4340292067d" />
+
+Looking back at this, I don't fully remember how I designed this and I also personally didn't use this since I wasn't the one working on XML Adobe forms.
+
+zcl_brf, this was created in S4, so may need adjustments to run in ECC.
+
+This was just an example of logic on how to call BRF+.
+
+zcm_exception_slin, created in S4 may need adjustments to run in ECC.
+
+This was an example of an exception message class that I was following for SAP RAP.
+
+zsorted_table_fields, this was created in S4 may need adjustments to run in ECC.
+
+This was something I created to test RTTS, which is basically ABAP with declared types. For some reason I remember reading somewhere saying for select statements
+keep the order of the fields the same as in the database table definition. So I created so that this could automatically sort the fields by the order in definition.
+I never found the article where I read that, so I guess this report became useless.
+
+The report allows the user to enter a table name and list of fields that user wants to sort.
+
+<img width="742" height="275" alt="image" src="https://github.com/user-attachments/assets/4f262d6c-2bc4-4ee3-abeb-4d23fff3acfd" />
+
+<img width="90" height="105" alt="image" src="https://github.com/user-attachments/assets/35fba667-6b29-406c-9b54-3744770eb2dc" />
