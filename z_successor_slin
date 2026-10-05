@@ -1,0 +1,69 @@
+DATA gv_object TYPE ars_sub_object_name.
+
+SELECT-OPTIONS s_object FOR gv_object NO INTERVALS OBLIGATORY.
+
+CLASS main DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS run.
+
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_output,
+             predecessor TYPE ars_sub_object_name,
+             successor   TYPE ars_sub_object_name,
+           END OF ty_output.
+
+    DATA mt_output TYPE STANDARD TABLE OF ty_output.
+
+    METHODS: get_data,
+      display_output,
+      set_label IMPORTING ir_column TYPE REF TO cl_salv_columns_table
+                          iv_field  TYPE lvc_fname
+                          iv_text   TYPE scrtext.
+ENDCLASS.
+
+CLASS main IMPLEMENTATION.
+  METHOD run.
+    get_data( ).
+    display_output( ).
+  ENDMETHOD.
+
+  METHOD get_data.
+    SELECT predecessorobjectname,
+           successorobjectname
+      FROM i_apiswithclouddevsuccessor
+      WHERE predecessorobjectname IN @s_object
+      INTO TABLE @mt_output.
+  ENDMETHOD.
+
+  METHOD display_output.
+    TRY.
+        cl_salv_table=>factory( IMPORTING r_salv_table = FINAL(lt_alv_table)
+                                CHANGING  t_table      = mt_output ).
+
+        FINAL(lo_columns) = lt_alv_table->get_columns( ).
+
+        set_label( ir_column = lo_columns iv_field = 'PREDECESSOR' iv_text = 'Predesessor'(003) ).
+        set_label( ir_column = lo_columns iv_field = 'SUCCESSOR' iv_text = 'Successor'(004) ).
+
+        lt_alv_table->get_columns( )->set_optimize( ).
+        lt_alv_table->display( ).
+      CATCH cx_salv_data_error.
+        MESSAGE |{ 'Issue with ALV Table'(002) }| TYPE 'E'.
+      CATCH cx_salv_msg.
+        MESSAGE |{ 'Issue getting ALV Table'(001) }| TYPE 'E'.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD set_label.
+    TRY.
+        ir_column->get_column( iv_field )->set_short_text( CONV #( iv_text ) ).
+        ir_column->get_column( iv_field )->set_medium_text( CONV #( iv_text ) ).
+        ir_column->get_column( iv_field )->set_long_text( CONV #( iv_text ) ).
+      CATCH cx_salv_not_found.
+        MESSAGE |{ 'Issue setting label'(005) }| TYPE 'E'.
+    ENDTRY.
+  ENDMETHOD.
+ENDCLASS.
+
+START-OF-SELECTION.
+  NEW main( )->run( ).
