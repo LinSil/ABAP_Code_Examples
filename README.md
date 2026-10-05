@@ -163,6 +163,17 @@ Here you can see less results by filtering to only show data where their whole v
 
 <img width="150" height="183" alt="image" src="https://github.com/user-attachments/assets/a5a2fab7-0ce6-4767-9319-2237268d4408" />
 
+z_successor_slin, created in S4 doesn't really have a use case in ECC.
+
+I created this report to streamline the process of looking for S4 successors to ECC's legacy API's.
+
+Report allows users to enter a list of tables or objects and it returns successor's name based on SAP's API.
+
+<img width="971" height="239" alt="image" src="https://github.com/user-attachments/assets/f7321e5e-125a-4de4-bbf7-7d3fe8c5f765" />
+
+<img width="308" height="80" alt="image" src="https://github.com/user-attachments/assets/29efe536-febc-46eb-afea-1ff42c3c10ee" />
+
+
 Z_version_slin, created in ECC so it should run on any SAP system that supports SE38.
 
 This was created as a POC to see if it was possible to get access to report's code within a report and send that data into an external AI.
